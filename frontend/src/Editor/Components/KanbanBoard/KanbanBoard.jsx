@@ -2,10 +2,10 @@ import _ from 'lodash';
 import React from 'react';
 import Board from './Board';
 import { isCardColoumnIdUpdated, updateCardData, updateColumnData, getData, isArray, isValidCardData } from './utils';
-import { useCurrentState } from '@/_stores/currentStateStore';
 
 export const BoardContext = React.createContext({});
 
+// This one is deprecated and not deleted to support backward compatibility
 export const KanbanBoard = ({
   id,
   height,
@@ -18,7 +18,6 @@ export const KanbanBoard = ({
   dataCy,
 }) => {
   const { columns, cardData, enableAddCard } = properties;
-  const currentState = useCurrentState();
   const { visibility, disabledState, width, minWidth, accentColor } = styles;
 
   const [rawColumnData, setRawColumnData] = React.useState([]);
@@ -108,9 +107,7 @@ export const KanbanBoard = ({
   }
   const darkMode = localStorage.getItem('darkMode') === 'true';
   return (
-    <BoardContext.Provider
-      value={{ id, currentState, enableAddCard, accentColor, containerProps, removeComponent, darkMode }}
-    >
+    <BoardContext.Provider value={{ id, enableAddCard, accentColor, containerProps, removeComponent, darkMode }}>
       <div
         id={id}
         style={{ display: visibility ? '' : 'none' }}

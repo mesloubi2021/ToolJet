@@ -4,9 +4,10 @@
 .global-datasources-sidebar {
     height: calc(100vh - 64px);
     max-width: 288px;
-    background: var(--base);
+    background: var(--page-default);
     display: grid;
     grid-template-rows: auto 1fr auto;
+    border-right: 1px solid var(--slate5);
 
     .add-datasource-btn {
         height: 40px;
@@ -40,6 +41,13 @@
 
             .ds-delete-btn {
                 visibility: visible;
+
+                .disabled-button {
+                    background-color: #FFFF;
+                    width: 19px;
+                    height: 19px;
+                    padding: 3px;
+                }
             }
         }
 
@@ -53,6 +61,10 @@
             visibility: hidden;
             border: none;
             background: none;
+        }
+
+        .tooltip-sampl-db {
+            width: 10px;
         }
     }
 
@@ -93,7 +105,7 @@
 
 .datasource-modal-container {
     position: relative;
-    // background: var(--slate2);
+    background: var(--page-default);
 
     .modal-header {
         background-color: var(--slate3) !important;
@@ -129,6 +141,7 @@
 
 .datasource-inner-sidebar-wrap {
     height: 100%;
+
     .datasources-search {
         width: 240px;
         margin: 0 auto;
@@ -160,11 +173,13 @@
 .datasource-selection-confirm-backdrop {
     z-index: 1060;
     opacity: 0.4 !important;
+    border-left: 1px solid var(--slate5);
 }
 
 .datasource-list-container {
     overflow-y: auto;
     max-height: calc(100vh - 64px);
+
     .datasource-list {
         width: 976px;
         margin: 0 auto;
@@ -180,9 +195,17 @@
             }
 
             input {
-                background: transparent;
+                background: none !important;
+                border: none !important;
             }
         }
+    }
+
+    .empty-ds-container {
+        position: absolute;
+        left: 50%;
+        transform: translate(-50%, 0);
+        top: 30%;
     }
 }
 
@@ -205,6 +228,7 @@
 .datasource-card {
     height: 30px;
     height: 122px !important;
+
     button {
         display: none;
         padding: 5px 10px;
@@ -220,7 +244,7 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        
+
         br:first-of-type {
             display: none !important;
         }
@@ -256,4 +280,24 @@
 
 .delete-modal {
     z-index: 1060 !important;
+}
+
+.add-plugins-container {
+    padding: 10px 0px;
+    margin: auto;
+    width: 28%;
+    height: 300px;
+    text-align: center;
+
+    .warning-container {
+        padding: 5px;
+        background-color: var(--slate3);
+        width: 50px;
+        height: 50px;
+        align-items: center;
+        display: flex;
+        justify-content: center;
+        border-radius: 6px;
+        margin: auto;
+    }
 }

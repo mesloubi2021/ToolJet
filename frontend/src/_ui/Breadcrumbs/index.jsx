@@ -1,12 +1,15 @@
 import React, { useContext } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import SolidIcon from '../Icon/SolidIcons';
 import { BreadCrumbContext } from '../../App/App';
 import useBreadcrumbs from 'use-react-router-breadcrumbs';
+import { decodeEntities } from '@/_helpers/utils';
 
 export const Breadcrumbs = ({ darkMode, dataCy }) => {
   const { sidebarNav } = useContext(BreadCrumbContext);
   const breadcrumbs = useBreadcrumbs(routes, { excludePaths: ['/'] });
+  const location = useLocation();
+  const search = location.search || '';
 
   return (
     <ol className="breadcrumb breadcrumb-arrows">
@@ -16,11 +19,9 @@ export const Breadcrumbs = ({ darkMode, dataCy }) => {
             <div key={breadcrumb.key} className="tj-dashboard-header-title-wrap" data-cy={dataCy ?? ''}>
               <p className=" tj-text-xsm ">{breadcrumb}</p>
               {sidebarNav?.length > 0 && <SolidIcon name="cheveronright" fill={darkMode ? '#FDFDFE' : '#131620'} />}
-              <li className="breadcrumb-item font-weight-500">
-                <Link to={breadcrumb.key} data-cy="breadcrumb-page-title">
-                  {' '}
-                  {sidebarNav}
-                </Link>
+              <li className="breadcrumb-item font-weight-500" data-cy="breadcrumb-page-title">
+                {' '}
+                {sidebarNav && decodeEntities(sidebarNav)}
               </li>
               {beta && <span className="badge bg-color-primary mx-3">beta</span>}
             </div>
@@ -35,6 +36,8 @@ const routes = [
   { path: '/:worspace_id', breadcrumb: 'Applications' },
   { path: '/:worspace_id/database', breadcrumb: 'Tables', props: { dataCy: 'tables-page-header' } },
   { path: '/workspace-settings', breadcrumb: 'Workspace settings' },
-  { path: '/data-sources', breadcrumb: 'Data Sources' },
+  { path: '/data-sources', breadcrumb: 'Data sources' },
+  { path: '/:worspace_id/workspace-constants', breadcrumb: ' ' },
+  { path: '/:worspace_id/settings', breadcrumb: ' ' },
   { path: '/integrations', breadcrumb: 'Integrations / plugins', props: { beta: true } },
 ];

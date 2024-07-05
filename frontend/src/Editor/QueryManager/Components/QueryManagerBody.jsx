@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import cx from 'classnames';
-import { cloneDeep, isEmpty } from 'lodash';
+import { isEmpty } from 'lodash';
 // eslint-disable-next-line import/no-unresolved
 import { diff } from 'deep-object-diff';
 import { allSources, source } from '../QueryEditors';
@@ -13,12 +13,13 @@ import { CustomToggleSwitch } from './CustomToggleSwitch';
 import { EventManager } from '@/Editor/Inspector/EventManager';
 import { staticDataSources, customToggles, mockDataQueryAsComponent } from '../constants';
 import { DataSourceTypes } from '../../DataSourceManager/SourceComponents';
-import { useDataSources, useGlobalDataSources } from '@/_stores/dataSourcesStore';
-import { useDataQueriesActions, useDataQueriesStore } from '@/_stores/dataQueriesStore';
+import { useDataSources, useGlobalDataSources, useSampleDataSource } from '@/_stores/dataSourcesStore';
+import { useDataQueriesActions } from '@/_stores/dataQueriesStore';
 import { useSelectedQuery, useSelectedDataSource } from '@/_stores/queryPanelStore';
 import { useAppVersionStore } from '@/_stores/appVersionStore';
 import { shallow } from 'zustand/shallow';
 import SuccessNotificationInputs from './SuccessNotificationInputs';
+import { deepClone } from '@/_helpers/utilities/utils.helpers';
 
 export const QueryManagerBody = ({
   darkMode,
@@ -32,6 +33,8 @@ export const QueryManagerBody = ({
   const { t } = useTranslation();
   const dataSources = useDataSources();
   const globalDataSources = useGlobalDataSources();
+  const sampleDataSource = useSampleDataSource();
+
   const selectedQuery = useSelectedQuery();
   const selectedDataSource = useSelectedDataSource();
   const { changeDataQuery, updateDataQuery } = useDataQueriesActions();
@@ -85,7 +88,7 @@ export const QueryManagerBody = ({
     const updatedOptions = cleanFocusedFields(newOptions);
     setOptions((options) => ({ ...options, ...updatedOptions }));
 
-    updateDataQuery(cloneDeep({ ...options, ...updatedOptions }));
+    updateDataQuery(deepClone({ ...options, ...updatedOptions }));
   };
 
   const optionchanged = (option, value) => {
@@ -95,14 +98,6 @@ export const QueryManagerBody = ({
 
   const optionsChanged = (newOptions) => {
     validateNewOptions(newOptions);
-  };
-
-  const eventsChanged = (events) => {
-    optionchanged('events', events);
-    //added this here since the subscriber added in QueryManager component does not detect this change
-    useDataQueriesStore
-      .getState()
-      .actions.saveData({ ...selectedQuery, options: { ...selectedQuery.options, events: events } });
   };
 
   const toggleOption = (option) => {
@@ -121,6 +116,7 @@ export const QueryManagerBody = ({
           dataSources={dataSources}
           staticDataSources={staticDataSources}
           globalDataSources={globalDataSources}
+          sampleDataSource={sampleDataSource}
           darkMode={darkMode}
         />
       </div>
@@ -185,9 +181,9 @@ export const QueryManagerBody = ({
         <div className={`form-label`}>{t('editor.queryManager.eventsHandler', 'Events')}</div>
         <div className="query-manager-events pb-4 flex-grow-1">
           <EventManager
-            eventsChanged={eventsChanged}
-            component={queryComponent.component}
-            componentMeta={queryComponent.componentMeta}
+            sourceId={selectedQuery?.id}
+            eventSourceType="data_query" //check
+            eventMetaDefinition={queryComponent.componentMeta}
             currentState={currentState}
             components={allComponents}
             callerQueryId={selectedQueryId}
@@ -242,9 +238,9 @@ export const QueryManagerBody = ({
   };
 
   const renderChangeDataSource = () => {
-    const selectableDataSources = [...globalDataSources, ...dataSources].filter(
-      (ds) => ds.kind === selectedQuery?.kind
-    );
+    const selectableDataSources = [...dataSources, ...globalDataSources, !!sampleDataSource && sampleDataSource]
+      .filter(Boolean)
+      .filter((ds) => ds.kind === selectedQuery?.kind);
     if (isEmpty(selectableDataSources)) {
       return '';
     }
@@ -277,7 +273,6 @@ export const QueryManagerBody = ({
       }`}
     >
       {selectedQuery?.data_source_id && selectedDataSource !== null ? renderChangeDataSource() : null}
-
       {selectedDataSource === null || !selectedQuery ? renderDataSourcesList() : renderQueryElement()}
       {selectedDataSource !== null ? renderQueryOptions() : null}
     </div>

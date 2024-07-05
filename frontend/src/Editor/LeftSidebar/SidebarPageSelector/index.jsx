@@ -11,6 +11,7 @@ import { useCurrentState } from '@/_stores/currentStateStore';
 import { useAppVersionStore } from '@/_stores/appVersionStore';
 import { shallow } from 'zustand/shallow';
 import { ButtonSolid } from '@/_ui/AppButton/AppButton';
+import { deepClone } from '@/_helpers/utilities/utils.helpers';
 
 const LeftSidebarPageSelector = ({
   appDefinition,
@@ -26,15 +27,21 @@ const LeftSidebarPageSelector = ({
   disableEnablePage,
   updateHomePage,
   updatePageHandle,
-  pages,
   homePageId,
   showHideViewerNavigationControls,
   updateOnSortingPages,
-  updateOnPageLoadEvents,
+
   apps,
   pinned,
   setPinned,
 }) => {
+  const pages = useMemo(
+    () =>
+      Object.entries(deepClone(appDefinition.pages))
+        .map(([id, page]) => ({ id, ...page }))
+        .sort((a, b) => a.index - b.index) || [],
+    [JSON.stringify(appDefinition.pages)]
+  );
   const [allpages, setPages] = useState(pages);
   const [haveUserPinned, setHaveUserPinned] = useState(false);
   const currentState = useCurrentState();
@@ -89,7 +96,7 @@ const LeftSidebarPageSelector = ({
               <GlobalSettings
                 darkMode={darkMode}
                 showHideViewerNavigationControls={showHideViewerNavigationControls}
-                showPageViwerPageNavitation={appDefinition?.showViewerNavigation || false}
+                isViewerNavigationDisabled={!appDefinition?.showViewerNavigation}
               />
             }
           >
@@ -166,7 +173,6 @@ const LeftSidebarPageSelector = ({
                 updatePageHandle={updatePageHandle}
                 classNames="page-handler"
                 onSort={updateOnSortingPages}
-                updateOnPageLoadEvents={updateOnPageLoadEvents}
                 currentState={currentState}
                 apps={apps}
                 allpages={pages}

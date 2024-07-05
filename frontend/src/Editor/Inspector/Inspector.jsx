@@ -1,9 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { componentTypes } from '../WidgetManager/components';
+import React, { useState, useEffect } from 'react';
 import { Table } from './Components/Table/Table.jsx';
 import { Chart } from './Components/Chart';
 import { Form } from './Components/Form';
-import { renderElement } from './Utils';
+import { renderElement, renderCustomStyles } from './Utils';
 import { toast } from 'react-hot-toast';
 import { validateQueryName, convertToKebabCase, resolveReferences } from '@/_helpers/utils';
 import { ConfirmDialog } from '@/_components';
@@ -33,6 +32,8 @@ import Edit from '@/_ui/Icon/bulkIcons/Edit';
 import Copy from '@/_ui/Icon/solidIcons/Copy';
 import Trash from '@/_ui/Icon/solidIcons/Trash';
 import classNames from 'classnames';
+import { useEditorStore, EMPTY_ARRAY } from '@/_stores/editorStore';
+import { deepClone } from '@/_helpers/utilities/utils.helpers';
 
 const INSPECTOR_HEADER_OPTIONS = [
   {
@@ -52,33 +53,49 @@ const INSPECTOR_HEADER_OPTIONS = [
   },
 ];
 
+const NEW_REVAMPED_COMPONENTS = [
+  'Text',
+  'TextInput',
+  'PasswordInput',
+  'NumberInput',
+  'Table',
+  'Button',
+  'ToggleSwitchV2',
+  'Checkbox',
+];
+
 export const Inspector = ({
-  selectedComponentId,
   componentDefinitionChanged,
   allComponents,
-  apps,
   darkMode,
-  switchSidebarTab,
   removeComponent,
   pages,
   cloneComponents,
 }) => {
   const dataQueries = useDataQueries();
+
+  const currentState = useCurrentState();
+  const { selectedComponentId, setSelectedComponents } = useEditorStore(
+    (state) => ({
+      selectedComponentId: state.selectedComponents[0]?.id,
+      setSelectedComponents: state.actions.setSelectedComponents,
+    }),
+    shallow
+  );
   const component = {
     id: selectedComponentId,
-    component: allComponents[selectedComponentId].component,
+    component: JSON.parse(JSON.stringify(allComponents?.[selectedComponentId]?.component)),
     layouts: allComponents[selectedComponentId].layouts,
     parent: allComponents[selectedComponentId].parent,
   };
-  const currentState = useCurrentState();
   const [showWidgetDeleteConfirmation, setWidgetDeleteConfirmation] = useState(false);
   // eslint-disable-next-line no-unused-vars
-  const [tabHeight, setTabHeight] = React.useState(0);
-  const componentNameRef = useRef(null);
-  const [newComponentName, setNewComponentName] = useState(component.component.name);
+  const [newComponentName, setNewComponentName] = useState('');
   const [inputRef, setInputFocus] = useFocus();
-  const [selectedTab, setSelectedTab] = useState('properties');
+
   const [showHeaderActionsMenu, setShowHeaderActionsMenu] = useState(false);
+  const isRevampedComponent = NEW_REVAMPED_COMPONENTS.includes(component.component.component);
+
   const { isVersionReleased } = useAppVersionStore(
     (state) => ({
       isVersionReleased: state.isVersionReleased,
@@ -86,34 +103,33 @@ export const Inspector = ({
     shallow
   );
   const { t } = useTranslation();
-
-  useHotkeys('backspace', () => {
-    if (isVersionReleased) return;
-    setWidgetDeleteConfirmation(true);
+  useHotkeys(
+    'backspace',
+    () => {
+      if (isVersionReleased) return;
+      setWidgetDeleteConfirmation(true);
+    },
+    { scopes: 'editor' }
+  );
+  useHotkeys('escape', () => setSelectedComponents(EMPTY_ARRAY), {
+    scopes: 'editor',
   });
-  useHotkeys('escape', () => switchSidebarTab(2));
 
-  const componentMeta = componentTypes.find((comp) => component.component.component === comp.component);
+  const componentMeta = JSON.parse(JSON.stringify(allComponents?.[selectedComponentId]?.component));
 
   const isMounted = useMounted();
 
+  //
   useEffect(() => {
-    componentNameRef.current = newComponentName;
-  }, [newComponentName]);
-
-  useEffect(() => {
-    return () => {
-      handleComponentNameChange(componentNameRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    setNewComponentName(allComponents[selectedComponentId]?.component?.name);
+  }, [selectedComponentId, allComponents]);
 
   const validateComponentName = (name) => {
     const isValid = !Object.values(allComponents)
-      .map((component) => component.component.name)
+      .map((component) => component?.component?.name)
       .includes(name);
 
-    if (component.component.name === name) {
+    if (component?.component.name === name) {
       return true;
     }
     return isValid;
@@ -131,9 +147,9 @@ export const Inspector = ({
       return setInputFocus();
     }
     if (validateQueryName(newName)) {
-      let newComponent = { ...component };
+      let newComponent = JSON.parse(JSON.stringify(component));
       newComponent.component.name = newName;
-      componentDefinitionChanged(newComponent);
+      componentDefinitionChanged(newComponent, { componentNameUpdated: true });
     } else {
       toast.error(
         t(
@@ -152,9 +168,9 @@ export const Inspector = ({
     return null;
   };
 
-  function paramUpdated(param, attr, value, paramType) {
-    console.log({ param, attr, value, paramType });
-    let newDefinition = _.cloneDeep(component.component.definition);
+  function paramUpdated(param, attr, value, paramType, isParamFromTableColumn = false) {
+    let newComponent = JSON.parse(JSON.stringify(component));
+    let newDefinition = deepClone(newComponent.component.definition);
     let allParams = newDefinition[paramType] || {};
     const paramObject = allParams[param.name];
     if (!paramObject) {
@@ -163,13 +179,15 @@ export const Inspector = ({
     if (attr) {
       allParams[param.name][attr] = value;
       const defaultValue = getDefaultValue(value);
-      // This is needed to have enable pagination as backward compatible
+      // This is needed to have enable pagination in Table as backward compatible
       // Whenever enable pagination is false, we turn client and server side pagination as false
-      if (param.name === 'enablePagination' && !resolveReferences(value, currentState)) {
+      if (component.component.component === 'Table' && param.name === 'enablePagination' && !resolveReferences(value)) {
         if (allParams?.['clientSidePagination']?.[attr]) {
           allParams['clientSidePagination'][attr] = value;
         }
-        allParams['serverSidePagination'][attr] = value;
+        if (allParams['serverSidePagination']?.[attr]) {
+          allParams['serverSidePagination'][attr] = value;
+        }
       }
       // This case is required to handle for older apps when serverSidePagination is connected to Fx
       if (param.name === 'serverSidePagination' && !allParams?.['enablePagination']?.[attr]) {
@@ -193,13 +211,28 @@ export const Inspector = ({
     } else {
       allParams[param.name] = value;
     }
+
+    if (
+      component.component.component === 'Table' &&
+      param.name === 'contentWrap' &&
+      !resolveReferences(value) &&
+      newDefinition.properties.columns.value.some((item) => item.columnType === 'image' && item.height !== '')
+    ) {
+      const updatedColumns = newDefinition.properties.columns.value.map((item) => {
+        return item.columnType === 'image' ? { ...item, height: '' } : item; // Create a new object for image columns
+      });
+
+      // Update the columns value with the updated columns
+      newDefinition.properties.columns.value = updatedColumns;
+      isParamFromTableColumn = true;
+    }
+
     newDefinition[paramType] = allParams;
-    let newComponent = _.merge(component, {
-      component: {
-        definition: newDefinition,
-      },
+    newComponent.component.definition = newDefinition;
+    componentDefinitionChanged(newComponent, {
+      componentPropertyUpdated: true,
+      isParamFromTableColumn: isParamFromTableColumn,
     });
-    componentDefinitionChanged(newComponent);
   }
 
   function layoutPropertyChanged(param, attr, value, paramType) {
@@ -207,9 +240,7 @@ export const Inspector = ({
 
     // User wants to show the widget on mobile devices
     if (param.name === 'showOnMobile' && value === true) {
-      let newComponent = {
-        ...component,
-      };
+      let newComponent = JSON.parse(JSON.stringify(component));
 
       const { width, height } = newComponent.layouts['desktop'];
 
@@ -223,10 +254,10 @@ export const Inspector = ({
         },
       };
 
-      componentDefinitionChanged(newComponent);
+      componentDefinitionChanged(newComponent, { layoutPropertyChanged: true });
 
       //  Child components should also have a mobile layout
-      const childComponents = Object.keys(allComponents).filter((key) => allComponents[key].parent === component.id);
+      const childComponents = Object.keys(allComponents).filter((key) => allComponents[key].parent === component?.id);
 
       childComponents.forEach((componentId) => {
         let newChild = {
@@ -246,52 +277,9 @@ export const Inspector = ({
           },
         };
 
-        componentDefinitionChanged(newChild);
+        componentDefinitionChanged(newChild, { withChildLayout: true });
       });
     }
-  }
-
-  function eventUpdated(event, actionId) {
-    let newDefinition = { ...component.component.definition };
-    newDefinition.events[event.name] = { actionId };
-
-    let newComponent = {
-      ...component,
-    };
-
-    componentDefinitionChanged(newComponent);
-  }
-
-  function eventsChanged(newEvents, isReordered = false) {
-    let newDefinition;
-    if (isReordered) {
-      newDefinition = { ...component.component };
-      newDefinition.definition.events = newEvents;
-    } else {
-      newDefinition = { ...component.component.definition };
-      newDefinition.events = newEvents;
-    }
-
-    let newComponent = {
-      ...component,
-    };
-
-    componentDefinitionChanged(newComponent);
-  }
-
-  function eventOptionUpdated(event, option, value) {
-    console.log('eventOptionUpdated', event, option, value);
-
-    let newDefinition = { ...component.component.definition };
-    let eventDefinition = newDefinition.events[event.name] || { options: {} };
-
-    newDefinition.events[event.name] = { ...eventDefinition, options: { ...eventDefinition.options, [option]: value } };
-
-    let newComponent = {
-      ...component,
-    };
-
-    componentDefinitionChanged(newComponent);
   }
 
   const handleInspectorHeaderActions = (value) => {
@@ -339,22 +327,17 @@ export const Inspector = ({
         paramUpdated={paramUpdated}
         dataQueries={dataQueries}
         componentMeta={componentMeta}
-        eventUpdated={eventUpdated}
-        eventOptionUpdated={eventOptionUpdated}
         components={allComponents}
         currentState={currentState}
         darkMode={darkMode}
-        eventsChanged={eventsChanged}
-        apps={apps}
         pages={pages}
         allComponents={allComponents}
       />
     </div>
   );
-
   const stylesTab = (
     <div style={{ marginBottom: '6rem' }} className={`${isVersionReleased && 'disabled'}`}>
-      <div className="p-3">
+      <div className={!isRevampedComponent && 'p-3'}>
         <Inspector.RenderStyleOptions
           componentMeta={componentMeta}
           component={component}
@@ -364,7 +347,7 @@ export const Inspector = ({
           allComponents={allComponents}
         />
       </div>
-      {buildGeneralStyle()}
+      {!isRevampedComponent && buildGeneralStyle()}
     </div>
   );
 
@@ -386,18 +369,22 @@ export const Inspector = ({
     <div className="inspector">
       <ConfirmDialog
         show={showWidgetDeleteConfirmation}
-        message={'Widget will be deleted, do you want to continue?'}
+        message={'Are you sure you want to delete this component?'}
         onConfirm={() => {
-          switchSidebarTab(2);
-          removeComponent(component);
+          setSelectedComponents(EMPTY_ARRAY);
+          removeComponent(component.id);
         }}
         onCancel={() => setWidgetDeleteConfirmation(false)}
         darkMode={darkMode}
       />
       <div>
-        <div className={`row inspector-component-title-input-holder ${isVersionReleased && 'disabled'}`}>
-          <div className="col-1" onClick={() => switchSidebarTab(2)}>
-            <span data-cy={`inspector-close-icon`} className="cursor-pointer">
+        <div className="row inspector-component-title-input-holder">
+          <div className="col-1" onClick={() => setSelectedComponents(EMPTY_ARRAY)}>
+            <span
+              data-cy={`inspector-close-icon`}
+              className="cursor-pointer d-flex align-items-center "
+              style={{ height: '28px', width: '28px' }}
+            >
               <ArrowLeft fill={'var(--slate12)'} width={'14'} />
             </span>
           </div>
@@ -414,7 +401,7 @@ export const Inspector = ({
               />
             </div>
           </div>
-          <div className="col-2">
+          <div className="col-2" data-cy={'component-inspector-options'}>
             <OverlayTrigger
               trigger={'click'}
               placement={'bottom-end'}
@@ -425,6 +412,7 @@ export const Inspector = ({
                   <Popover.Body bsPrefix="list-item-popover-body">
                     {INSPECTOR_HEADER_OPTIONS.map((option) => (
                       <div
+                        data-cy={`component-inspector-${String(option?.value).toLowerCase()}-button`}
                         className="list-item-popover-option"
                         key={option?.value}
                         onClick={(e) => {
@@ -464,17 +452,17 @@ export const Inspector = ({
         </div>
       </div>
       <span className="widget-documentation-link">
-        <a
-          href={`https://docs.tooljet.io/docs/widgets/${convertToKebabCase(componentMeta?.name ?? '')}`}
-          target="_blank"
-          rel="noreferrer"
-          data-cy="widget-documentation-link"
-        >
+        <a href={getDocsLink(componentMeta)} target="_blank" rel="noreferrer" data-cy="widget-documentation-link">
           <span>
             <Student width={13} fill={'#3E63DD'} />
             <small className="widget-documentation-link-text">
               {t('widget.common.documentation', 'Read documentation for {{componentMeta}}', {
-                componentMeta: componentMeta.name,
+                componentMeta:
+                  componentMeta.displayName === 'Toggle Switch (Legacy)'
+                    ? 'Toggle (Legacy)'
+                    : componentMeta.displayName === 'Toggle Switch'
+                    ? 'Toggle Switch'
+                    : componentMeta.component,
               })}
             </small>
           </span>
@@ -485,6 +473,11 @@ export const Inspector = ({
       </span>
     </div>
   );
+};
+const getDocsLink = (componentMeta) => {
+  return componentMeta.component == 'ToggleSwitchV2'
+    ? `https://docs.tooljet.io/docs/widgets/toggle-switch`
+    : `https://docs.tooljet.io/docs/widgets/${convertToKebabCase(componentMeta?.component ?? '')}`;
 };
 
 const widgetsWithStyleConditions = {
@@ -497,10 +490,40 @@ const widgetsWithStyleConditions = {
       },
     ],
   },
+  Table: {
+    conditions: [
+      {
+        definition: 'styles',
+        property: 'contentWrap',
+        conditionStyles: ['maxRowHeight', 'autoHeight'],
+        type: 'toggle',
+      },
+    ],
+  },
 };
 
 const RenderStyleOptions = ({ componentMeta, component, paramUpdated, dataQueries, currentState, allComponents }) => {
-  return Object.keys(componentMeta.styles).map((style) => {
+  // Initialize an object to group properties by "accordian"
+  const groupedProperties = {};
+  if (NEW_REVAMPED_COMPONENTS.includes(component.component.component)) {
+    // Iterate over the properties in componentMeta.styles
+    for (const key in componentMeta.styles) {
+      const property = componentMeta.styles[key];
+      const accordian = property.accordian;
+
+      // Check if the "accordian" key exists in groupedProperties
+      if (!groupedProperties[accordian]) {
+        groupedProperties[accordian] = {}; // Create an empty object for the "accordian" key if it doesn't exist
+      }
+
+      // Add the property to the corresponding "accordian" object
+      groupedProperties[accordian][key] = property;
+    }
+  }
+
+  return Object.keys(
+    NEW_REVAMPED_COMPONENTS.includes(component.component.component) ? groupedProperties : componentMeta.styles
+  ).map((style) => {
     const conditionWidget = widgetsWithStyleConditions[component.component.component] ?? null;
     const condition = conditionWidget?.conditions.find((condition) => condition.property) ?? {};
 
@@ -517,27 +540,56 @@ const RenderStyleOptions = ({ componentMeta, component, paramUpdated, dataQuerie
         allComponents,
         style,
         propertyConditon,
-        component.component?.definition[widgetPropertyDefinition]
+        component?.component?.definition[widgetPropertyDefinition]
       );
     }
 
-    return renderElement(
-      component,
-      componentMeta,
-      paramUpdated,
-      dataQueries,
-      style,
-      'styles',
-      currentState,
-      allComponents
-    );
+    const items = [];
+
+    if (NEW_REVAMPED_COMPONENTS.includes(component.component.component)) {
+      items.push({
+        title: `${style}`,
+        children: Object.entries(groupedProperties[style]).map(([key, value]) => ({
+          ...renderCustomStyles(
+            component,
+            componentMeta,
+            paramUpdated,
+            dataQueries,
+            key,
+            'styles',
+            currentState,
+            allComponents,
+            value.accordian
+          ),
+        })),
+      });
+      return <Accordion key={style} items={items} />;
+    } else {
+      return renderElement(
+        component,
+        componentMeta,
+        paramUpdated,
+        dataQueries,
+        style,
+        'styles',
+        currentState,
+        allComponents
+      );
+    }
   });
 };
 
 const resolveConditionalStyle = (definition, condition, currentState) => {
   const conditionExistsInDefinition = definition[condition] ?? false;
   if (conditionExistsInDefinition) {
-    return resolveReferences(definition[condition]?.value ?? false, currentState);
+    switch (condition) {
+      case 'cellSize': {
+        const cellSize = resolveReferences(definition[condition]?.value ?? false) === 'hugContent';
+        return cellSize;
+      }
+      default:
+        return resolveReferences(definition[condition]?.value ?? false);
+    }
   }
 };
 

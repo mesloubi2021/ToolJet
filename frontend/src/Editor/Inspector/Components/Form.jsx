@@ -25,7 +25,7 @@ export const Form = ({
   const { id } = component;
   const newOptions = [{ name: 'None', value: 'none' }];
   Object.entries(allComponents).forEach(([componentId, component]) => {
-    if (component.parent === id && component?.component?.component === 'Button') {
+    if (component.component.parent === id && component?.component?.component === 'Button') {
       newOptions.push({ name: component.component.name, value: componentId });
     }
   });
@@ -94,8 +94,9 @@ export const baseComponentProperties = (
       isOpen: true,
       children: (
         <EventManager
-          component={component}
-          componentMeta={componentMeta}
+          sourceId={component?.id}
+          eventSourceType="component"
+          eventMetaDefinition={componentMeta}
           currentState={currentState}
           dataQueries={dataQueries}
           components={allComponents}
@@ -147,7 +148,7 @@ export const baseComponentProperties = (
   });
 
   items.push({
-    title: `${i18next.t('widget.common.layout', 'Layout')}`,
+    title: `${i18next.t('widget.common.devices', 'Devices')}`,
     isOpen: true,
     children: (
       <>

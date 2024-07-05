@@ -15,15 +15,21 @@ export class LibraryAppsController {
 
   @Post()
   @UseGuards(JwtAuthGuard)
-  async create(@User() user, @Body('identifier') identifier) {
+  async create(@User() user, @Body('identifier') identifier, @Body('appName') appName) {
     const ability = await this.appsAbilityFactory.appsActions(user);
 
     if (!ability.can('createApp', App)) {
       throw new ForbiddenException('You do not have permissions to perform this action');
     }
-    const newApp = await this.libraryAppCreationService.perform(user, identifier);
+    const newApp = await this.libraryAppCreationService.perform(user, identifier, appName);
 
     return newApp;
+  }
+
+  @Get('sample-app')
+  @UseGuards(JwtAuthGuard)
+  async createSampleApp(@User() user) {
+    return await this.libraryAppCreationService.createSampleApp(user);
   }
 
   @Get()

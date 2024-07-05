@@ -1,10 +1,19 @@
-import { useRef } from 'react';
+import { useRef, useContext } from 'react';
 import PostgrestQueryBuilder from '@/_helpers/postgrestQueryBuilder';
 import { tooljetDatabaseService } from '@/_services';
 import { isEmpty } from 'lodash';
 import { toast } from 'react-hot-toast';
+import { TooljetDatabaseContext } from './index';
 
-export const usePostgrestQueryBuilder = ({ organizationId, selectedTable, setSelectedTableData, setTotalRecords }) => {
+export const usePostgrestQueryBuilder = ({
+  organizationId,
+  selectedTable,
+  setSelectedTableData,
+  setTotalRecords,
+  setLoadingState,
+}) => {
+  const { pageSize } = useContext(TooljetDatabaseContext);
+
   const postgrestQueryBuilder = useRef({
     filterQuery: new PostgrestQueryBuilder(),
     sortQuery: new PostgrestQueryBuilder(),
@@ -25,16 +34,14 @@ export const usePostgrestQueryBuilder = ({ organizationId, selectedTable, setSel
   };
 
   const updateSelectedTableData = async () => {
-    const sortQuery = isEmpty(postgrestQueryBuilder.current.sortQuery.url.toString())
-      ? 'order=id.desc'
-      : postgrestQueryBuilder.current.sortQuery.url.toString();
+    setLoadingState(true);
 
-    const query =
-      postgrestQueryBuilder.current.filterQuery.url.toString() +
-      '&' +
-      sortQuery +
-      '&' +
-      postgrestQueryBuilder.current.paginationQuery.url.toString();
+    let query = '';
+    query = query + postgrestQueryBuilder.current.filterQuery.url.toString();
+    if (!isEmpty(postgrestQueryBuilder.current.sortQuery.url.toString())) {
+      query = query + '&' + postgrestQueryBuilder.current.sortQuery.url.toString();
+    }
+    query = query + '&' + postgrestQueryBuilder.current.paginationQuery.url.toString();
 
     const { headers, data, error } = await tooljetDatabaseService.findOne(organizationId, selectedTable.id, query);
 
@@ -46,6 +53,7 @@ export const usePostgrestQueryBuilder = ({ organizationId, selectedTable, setSel
     const totalRecords = headers['content-range'].split('/')[1] || 0;
 
     if (Array.isArray(data)) {
+      setLoadingState(false);
       setTotalRecords(totalRecords);
       setSelectedTableData(data);
     }
@@ -58,11 +66,12 @@ export const usePostgrestQueryBuilder = ({ organizationId, selectedTable, setSel
         const { column, operator, value } = filters[key];
         if (!isEmpty(column) && !isEmpty(operator) && !isEmpty(value)) {
           postgrestQueryBuilder.current.filterQuery.filter(column, operator, value);
+          //buildPaginationQuery(pageSize, 0);
         }
       }
     });
 
-    updateSelectedTableData();
+    buildPaginationQuery(pageSize, 0);
   };
 
   const buildPaginationQuery = (limit, offset) => {
@@ -87,7 +96,6 @@ export const usePostgrestQueryBuilder = ({ organizationId, selectedTable, setSel
   };
 
   const resetAll = () => {
-    console.log('resetAll');
     postgrestQueryBuilder.current.sortQuery = new PostgrestQueryBuilder();
 
     postgrestQueryBuilder.current.paginationQuery.limit(50);
@@ -98,6 +106,35 @@ export const usePostgrestQueryBuilder = ({ organizationId, selectedTable, setSel
     handleBuildSortQuery({});
   };
 
+  const handleRefetchQuery = (filters = {}, sort = {}, currentPage = 1, pageLimit = 50) => {
+    // To retain Sort values on Update
+    postgrestQueryBuilder.current.sortQuery = new PostgrestQueryBuilder();
+    Object.keys(sort).map((key) => {
+      if (!isEmpty(sort[key])) {
+        const { column, order } = sort[key];
+        if (!isEmpty(column) && !isEmpty(order)) {
+          postgrestQueryBuilder.current.sortQuery.order(column, order);
+        }
+      }
+    });
+    // To retain Filter values on Update
+    postgrestQueryBuilder.current.filterQuery = new PostgrestQueryBuilder();
+    Object.keys(filters).map((key) => {
+      if (!isEmpty(filters[key])) {
+        const { column, operator, value } = filters[key];
+        if (!isEmpty(column) && !isEmpty(operator) && !isEmpty(value)) {
+          postgrestQueryBuilder.current.filterQuery.filter(column, operator, value);
+        }
+      }
+    });
+
+    const offset = currentPage === 1 ? 0 : (currentPage - 1) * pageSize;
+    postgrestQueryBuilder.current.paginationQuery.limit(pageLimit);
+    postgrestQueryBuilder.current.paginationQuery.offset(offset);
+
+    updateSelectedTableData();
+  };
+
   return {
     handleBuildFilterQuery,
     handleBuildSortQuery,
@@ -105,5 +142,6 @@ export const usePostgrestQueryBuilder = ({ organizationId, selectedTable, setSel
     resetSortQuery,
     resetFilterQuery,
     resetAll,
+    handleRefetchQuery,
   };
 };

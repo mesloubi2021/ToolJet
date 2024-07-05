@@ -12,7 +12,8 @@ You can run the command below to have ToolJet up and running right away.
 docker run \
   --name tooljet \
   --restart unless-stopped \
-  -p 3000:3000 \
+  -p 80:80 \
+  --platform linux/amd64 \
   -v tooljet_data:/var/lib/postgresql/13/main \
   tooljet/try:latest
 ```

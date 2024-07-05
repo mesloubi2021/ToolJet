@@ -1,4 +1,3 @@
-import allPlugins from '@tooljet/plugins/dist/server';
 import { Injectable, NotAcceptableException, NotImplementedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, getManager, Repository } from 'typeorm';
@@ -305,11 +304,12 @@ export class DataSourcesService {
 
     const parsedOptions = JSON.parse(JSON.stringify(options));
 
+    // need to match if currentOption is a contant, {{constants.psql_db}
+    const constantMatcher = /{{constants\..+?}}/g;
+
     for (const key of Object.keys(parsedOptions)) {
       const currentOption = parsedOptions[key]?.['value'];
       const variablesMatcher = /(%%.+?%%)/g;
-      // need to match if currentOption is a contant, {{constants.psql_db}
-      const constantMatcher = /{{constants\..+?}}/g;
       const variableMatched = variablesMatcher.exec(currentOption);
 
       if (variableMatched) {
@@ -328,7 +328,15 @@ export class DataSourcesService {
       for (const key of Object.keys(parsedOptions)) {
         const credentialId = parsedOptions[key]?.['credential_id'];
         if (credentialId) {
-          sourceOptions[key] = await this.credentialsService.getValue(credentialId);
+          const encryptedKeyValue = await this.credentialsService.getValue(credentialId);
+
+          //check if encrypted key value is a constant
+          if (constantMatcher.test(encryptedKeyValue)) {
+            const resolved = await this.resolveConstants(encryptedKeyValue, organization_id, environment_id);
+            sourceOptions[key] = resolved;
+          } else {
+            sourceOptions[key] = encryptedKeyValue;
+          }
         } else {
           sourceOptions[key] = parsedOptions[key]['value'];
         }
@@ -355,8 +363,11 @@ export class DataSourcesService {
     if (findOption(options, 'oauth2') && findOption(options, 'code')) {
       const provider = findOption(options, 'provider')['value'];
       const authCode = findOption(options, 'code')['value'];
+      const pluginIdOption = findOption(options, 'plugin_id');
+      const plugin_id = pluginIdOption ? pluginIdOption['value'] : null;
+      const queryService = await this.pluginsHelper.getService(plugin_id, provider);
 
-      const queryService = new allPlugins[provider]();
+      //const queryService = new allPlugins[provider]();
       const accessDetails = await queryService.accessDetailsFrom(authCode, options);
 
       for (const row of accessDetails) {
@@ -411,7 +422,9 @@ export class DataSourcesService {
     for (const option of optionsWithOauth) {
       if (option['encrypted']) {
         const existingCredentialId =
-          dataSource.options[option['key']] && dataSource.options[option['key']]['credential_id'];
+          dataSource?.options &&
+          dataSource.options[option['key']] &&
+          dataSource.options[option['key']]['credential_id'];
 
         if (existingCredentialId) {
           (option['value'] || option['value'] === '') &&
@@ -507,9 +520,10 @@ export class DataSourcesService {
     });
   }
 
-  getAuthUrl(provider: string, sourceOptions?: any): { url: string } {
-    const service = new allPlugins[provider]();
-    return { url: service.authUrl(sourceOptions) };
+  async getAuthUrl(provider: string, source_options?: any, plugin_id?: any): Promise<{ url: string }> {
+    const service = await this.pluginsHelper.getService(plugin_id, provider);
+    //const service = new allPlugins[provider]();
+    return { url: service.authUrl(source_options) };
   }
 
   async resolveConstants(str: string, organization_id: string, environmentId: string) {
@@ -526,7 +540,11 @@ export class DataSourcesService {
       );
 
       if (constant) {
-        result = constant.value;
+        result = await this.encryptionService.decryptColumnValue(
+          'org_environment_constant_values',
+          organization_id,
+          constant.value
+        );
       }
     }
 

@@ -6,23 +6,40 @@ import { useTranslation } from 'react-i18next';
 import Select from '@/_ui/Select';
 import { useAppVersionStore } from '@/_stores/appVersionStore';
 import { shallow } from 'zustand/shallow';
+import { useEnvironmentsAndVersionsStore } from '@/_stores/environmentsAndVersionsStore';
 
 export const CreateVersion = ({
   appId,
-  appVersions,
-  setAppVersions,
   setAppDefinitionFromVersion,
   showCreateAppVersion,
   setShowCreateAppVersion,
 }) => {
   const [isCreatingVersion, setIsCreatingVersion] = useState(false);
   const [versionName, setVersionName] = useState('');
+  const { versionsPromotedToEnvironment: appVersions, createNewVersionAction } = useEnvironmentsAndVersionsStore(
+    (state) => ({
+      appVersionsLazyLoaded: state.appVersionsLazyLoaded,
+      versionsPromotedToEnvironment: state.versionsPromotedToEnvironment,
+      lazyLoadAppVersions: state.actions.lazyLoadAppVersions,
+      createNewVersionAction: state.actions.createNewVersionAction,
+    }),
+    shallow
+  );
+
   const { t } = useTranslation();
   const { editingVersion } = useAppVersionStore(
     (state) => ({
       editingVersion: state.editingVersion,
     }),
     shallow
+  );
+
+  const options = appVersions.map((version) => {
+    return { label: version.name, value: version };
+  });
+
+  const [selectedVersion, setSelectedVersion] = useState(
+    () => options.find((option) => option?.value?.id === editingVersion?.id)?.value
   );
 
   const createVersion = () => {
@@ -36,28 +53,31 @@ export const CreateVersion = ({
     }
 
     setIsCreatingVersion(true);
-    appVersionService
-      .create(appId, versionName, editingVersion.id)
-      .then(() => {
+
+    createNewVersionAction(
+      appId,
+      versionName,
+      selectedVersion.id,
+      (newVersion) => {
         toast.success('Version Created');
-        appVersionService.getAll(appId).then((data) => {
-          setVersionName('');
-          setIsCreatingVersion(false);
-          setAppVersions(data.versions);
-          const latestVersion = data.versions.at(0);
-          setAppDefinitionFromVersion(latestVersion);
-          setShowCreateAppVersion(false);
-        });
-      })
-      .catch((error) => {
+        setVersionName('');
+        setIsCreatingVersion(false);
+        setShowCreateAppVersion(false);
+        appVersionService
+          .getAppVersionData(appId, newVersion.id)
+          .then((data) => {
+            setAppDefinitionFromVersion(data);
+          })
+          .catch((error) => {
+            toast.error(error);
+          });
+      },
+      (error) => {
         toast.error(error?.error);
         setIsCreatingVersion(false);
-      });
+      }
+    );
   };
-
-  const options = appVersions.map((version) => {
-    return { label: version.name, value: version };
-  });
 
   return (
     <AlertDialog
@@ -101,9 +121,9 @@ export const CreateVersion = ({
           <div className="ts-control" data-cy="create-version-from-input-field">
             <Select
               options={options}
-              defaultValue={options.find((option) => option?.value?.id === editingVersion?.id)}
+              value={selectedVersion}
               onChange={(version) => {
-                setAppDefinitionFromVersion(version, false);
+                setSelectedVersion(version);
               }}
               useMenuPortal={false}
               width="100%"

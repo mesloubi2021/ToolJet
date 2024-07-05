@@ -9,6 +9,7 @@ export const DocsCard = ({ label, imgSrc, link, height = 40, width = 40, title }
 
     const description = {
         "Try ToolJet": "Try out ToolJet with single docker command",
+        "System Requirements": "Learn about system requirements for running ToolJet",
         DigitalOcean: "Quickly deploy ToolJet using the Deploy to DigitalOcean button",
         Docker: "Deploy ToolJet on a server using docker-compose",
         Heroku: "Deploy ToolJet on Heroku using the one-click-deployment button",
@@ -26,6 +27,7 @@ export const DocsCard = ({ label, imgSrc, link, height = 40, width = 40, title }
         "Connecting via HTTP proxy": "Environment variables required by ToolJet to connect via HTTP proxy",
         "Deploying ToolJet on a subpath": "Steps to deploy ToolJet on a subpath rather than root of domain",
         "V2 migration guide": "Things to know before migrating to ToolJet V2",
+        "Upgrading ToolJet to the LTS Version": "Guide to upgrade ToolJet to the latest LTS Version."
     }
 
     return (

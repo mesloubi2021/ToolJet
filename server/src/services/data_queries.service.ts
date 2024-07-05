@@ -14,7 +14,10 @@ import { EncryptionService } from './encryption.service';
 import { App } from 'src/entities/app.entity';
 import { AppEnvironmentService } from './app_environments.service';
 import { dbTransactionWrap } from 'src/helpers/utils.helper';
+import allPlugins from '@tooljet/plugins/dist/server';
 import { DataSourceScopes } from 'src/helpers/data_source.constants';
+import { EventHandler } from 'src/entities/event_handler.entity';
+import { IUpdatingReferencesOptions } from '@dto/data-query.dto';
 
 @Injectable()
 export class DataQueriesService {
@@ -74,7 +77,19 @@ export class DataQueriesService {
   }
 
   async delete(dataQueryId: string) {
+    await this.deleteDataQueryEvents(dataQueryId);
+
     return await this.dataQueriesRepository.delete(dataQueryId);
+  }
+
+  async deleteDataQueryEvents(dataQueryId: string) {
+    return await dbTransactionWrap(async (manager: EntityManager) => {
+      const allEvents = await manager.find(EventHandler, {
+        where: { sourceId: dataQueryId },
+      });
+
+      return await manager.remove(allEvents);
+    });
   }
 
   async update(dataQueryId: string, name: string, options: object): Promise<DataQuery> {
@@ -86,6 +101,24 @@ export class DataQueriesService {
     });
 
     return dataQuery;
+  }
+
+  async bulkUpdateQueryOptions(dataQueriesOptions: IUpdatingReferencesOptions[]) {
+    return await dbTransactionWrap(async (manager: EntityManager) => {
+      for (const { id, options } of dataQueriesOptions) {
+        await manager.save(DataQuery, {
+          id,
+          options,
+          updatedAt: new Date(),
+        });
+      }
+
+      return await manager
+        .createQueryBuilder(DataQuery, 'data_query')
+        .select(['id', 'options', 'updated_at'])
+        .where('data_query.id IN (:...ids)', { ids: dataQueriesOptions.map((query) => query.id) })
+        .execute();
+    });
   }
 
   async fetchServiceAndParsedParams(dataSource, dataQuery, queryOptions, organization_id, environmentId = undefined) {
@@ -173,10 +206,11 @@ export class DataQueriesService {
           } catch (error) {
             if (error.constructor.name === 'OAuthUnauthorizedClientError') {
               // unauthorized error need to re-authenticate
+              const result = await this.dataSourcesService.getAuthUrl(dataSource.kind, sourceOptions);
               return {
                 status: 'needs_oauth',
                 data: {
-                  auth_url: this.dataSourcesService.getAuthUrl(dataSource.kind, sourceOptions).url,
+                  auth_url: result.url,
                 },
               };
             }
@@ -234,10 +268,11 @@ export class DataQueriesService {
             }
           );
         } else if (dataSource.kind === 'restapi' || dataSource.kind === 'openapi' || dataSource.kind === 'graphql') {
+          const result = await this.dataSourcesService.getAuthUrl(dataSource.kind, sourceOptions);
           return {
             status: 'needs_oauth',
             data: {
-              auth_url: this.dataSourcesService.getAuthUrl(dataSource.kind, sourceOptions).url,
+              auth_url: result.url,
             },
           };
         } else {
@@ -338,6 +373,22 @@ export class DataQueriesService {
     }
   };
 
+  /* this function only for getting auth token for googlesheets and related plugins*/
+  async fetchAPITokenFromPlugins(dataSource: DataSource, code: string, sourceOptions: any) {
+    const queryService = new allPlugins[dataSource.kind]();
+    const accessDetails = await queryService.accessDetailsFrom(code, sourceOptions);
+    const options = [];
+    for (const row of accessDetails) {
+      const option = {};
+      option['key'] = row[0];
+      option['value'] = row[1];
+      option['encrypted'] = true;
+
+      options.push(option);
+    }
+    return options;
+  }
+
   /* This function fetches access token from authorization code */
   async authorizeOauth2(
     dataSource: DataSource,
@@ -347,22 +398,27 @@ export class DataQueriesService {
     organizationId?: string
   ): Promise<void> {
     const sourceOptions = await this.parseSourceOptions(dataSource.options, organizationId, environmentId);
-    const isMultiAuthEnabled = dataSource.options['multiple_auth_enabled']?.value;
-    const newToken = await this.fetchOAuthToken(sourceOptions, code, userId, isMultiAuthEnabled);
-    const tokenData = this.getCurrentToken(
-      isMultiAuthEnabled,
-      dataSource.options['tokenData']?.value,
-      newToken,
-      userId
-    );
+    let tokenOptions: any;
+    if (['googlesheets', 'slack', 'zendesk', 'salesforce'].includes(dataSource.kind)) {
+      tokenOptions = await this.fetchAPITokenFromPlugins(dataSource, code, sourceOptions);
+    } else {
+      const isMultiAuthEnabled = dataSource.options['multiple_auth_enabled']?.value;
+      const newToken = await this.fetchOAuthToken(sourceOptions, code, userId, isMultiAuthEnabled);
+      const tokenData = this.getCurrentToken(
+        isMultiAuthEnabled,
+        dataSource.options['tokenData']?.value,
+        newToken,
+        userId
+      );
 
-    const tokenOptions = [
-      {
-        key: 'tokenData',
-        value: tokenData,
-        encrypted: false,
-      },
-    ];
+      tokenOptions = [
+        {
+          key: 'tokenData',
+          value: tokenData,
+          encrypted: false,
+        },
+      ];
+    }
 
     await this.dataSourcesService.updateOptions(dataSource.id, tokenOptions, organizationId, environmentId);
     return;
@@ -371,12 +427,32 @@ export class DataQueriesService {
   async parseSourceOptions(options: any, organization_id: string, environmentId: string): Promise<object> {
     // For adhoc queries such as REST API queries, source options will be null
     if (!options) return {};
+    const variablesMatcher = /(%%.+?%%)/g;
+    const constantMatcher = /{{constants\..+?}}/g;
 
     for (const key of Object.keys(options)) {
       const currentOption = options[key]?.['value'];
-      const variablesMatcher = /(%%.+?%%)/g;
+
+      //! request options are nested arrays with constants and variables
+      if (Array.isArray(currentOption)) {
+        for (let i = 0; i < currentOption.length; i++) {
+          const curr = currentOption[i];
+
+          if (Array.isArray(curr)) {
+            for (let j = 0; j < curr.length; j++) {
+              const inner = curr[j];
+              constantMatcher.lastIndex = 0;
+
+              if (constantMatcher.test(inner)) {
+                const resolved = await this.resolveConstants(inner, organization_id, environmentId);
+                curr[j] = resolved;
+              }
+            }
+          }
+        }
+      }
+
       const matched = variablesMatcher.exec(currentOption);
-      const constantMatcher = /{{constants\..+?}}/g;
       if (matched) {
         const resolved = await this.resolveVariable(currentOption, organization_id);
 
@@ -465,7 +541,11 @@ export class DataQueriesService {
       );
 
       if (constant) {
-        result = constant.value;
+        result = await this.encryptionService.decryptColumnValue(
+          'org_environment_constant_values',
+          organization_id,
+          constant.value
+        );
       }
     }
 

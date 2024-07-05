@@ -4,6 +4,8 @@ import TooljetDatabasePage from './TooljetDatabasePage';
 import { usePostgrestQueryBuilder } from './usePostgrestQueryBuilder';
 import { authenticationService } from '../_services/authentication.service';
 import { BreadCrumbContext } from '@/App/App';
+import { useNavigate } from 'react-router-dom';
+import { pageTitles, fetchAndSetWindowTitle } from '@white-label/whiteLabelling';
 
 export const TooljetDatabaseContext = createContext({
   organizationId: null,
@@ -20,6 +22,8 @@ export const TooljetDatabaseContext = createContext({
   setColumns: () => {},
   totalRecords: 0,
   setTotalRecords: () => {},
+  loadingState: false,
+  setLoadingState: () => {},
   handleBuildFilterQuery: () => {},
   handleBuildSortQuery: () => {},
   buildPaginationQuery: () => {},
@@ -29,6 +33,15 @@ export const TooljetDatabaseContext = createContext({
   setQueryFilters: () => {},
   sortFilters: {},
   setSortFilters: () => {},
+  selectRows: [],
+  setSelectRows: () => {},
+  pageCount: 1,
+  setPageCount: () => {},
+  pageSize: 50,
+  setPageSize: () => {},
+  handleRefetchQuery: () => {},
+  foreignKeys: [],
+  setForeignKeys: () => [],
 });
 
 export const TooljetDatabase = (props) => {
@@ -40,11 +53,30 @@ export const TooljetDatabase = (props) => {
   const [searchParam, setSearchParam] = useState('');
   const [selectedTable, setSelectedTable] = useState({});
   const [selectedTableData, setSelectedTableData] = useState([]);
+  const [pageCount, setPageCount] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   const [totalRecords, setTotalRecords] = useState(0);
+  const [loadingState, setLoadingState] = useState(false);
 
   const [queryFilters, setQueryFilters] = useState({});
   const [sortFilters, setSortFilters] = useState({});
+  const [collapseSidebar, setCollapseSidebar] = useState(false);
+
+  const [foreignKeys, setForeignKeys] = useState([]);
+
+  const toggleCollapsibleSidebar = () => {
+    setCollapseSidebar(!collapseSidebar);
+  };
+  const navigate = useNavigate();
+  const { admin } = authenticationService.currentSessionValue;
+  // let { state } = useLocation();
+
+  // console.log('state', selectedTable);
+
+  if (!admin) {
+    navigate('/');
+  }
 
   const {
     handleBuildFilterQuery,
@@ -53,11 +85,13 @@ export const TooljetDatabase = (props) => {
     resetSortQuery,
     resetFilterQuery,
     resetAll,
+    handleRefetchQuery,
   } = usePostgrestQueryBuilder({
     organizationId,
     selectedTable,
     setSelectedTableData,
     setTotalRecords,
+    setLoadingState,
   });
 
   const value = useMemo(
@@ -86,6 +120,15 @@ export const TooljetDatabase = (props) => {
       sortFilters,
       setSortFilters,
       resetAll,
+      pageCount,
+      setPageCount,
+      pageSize,
+      setPageSize,
+      handleRefetchQuery,
+      loadingState,
+      setLoadingState,
+      foreignKeys,
+      setForeignKeys,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -98,6 +141,7 @@ export const TooljetDatabase = (props) => {
       totalRecords,
       queryFilters,
       sortFilters,
+      foreignKeys,
     ]
   );
 
@@ -105,14 +149,27 @@ export const TooljetDatabase = (props) => {
 
   useEffect(() => {
     updateSidebarNAV('');
+    // if (state.id && state.name) {
+    //   setSelectedTable({ id: state.id, table_name: state.name });
+    // }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    fetchAndSetWindowTitle({ page: `${selectedTable?.table_name || pageTitles.DATABASE}` });
+  }, [selectedTable]);
+
   return (
-    <Layout switchDarkMode={props.switchDarkMode} darkMode={props.darkMode}>
+    <Layout
+      switchDarkMode={props.switchDarkMode}
+      darkMode={props.darkMode}
+      enableCollapsibleSidebar={true}
+      collapseSidebar={collapseSidebar}
+      toggleCollapsibleSidebar={toggleCollapsibleSidebar}
+    >
       <div className="page-wrapper tooljet-database">
         <TooljetDatabaseContext.Provider value={value}>
-          <TooljetDatabasePage totalTables={tables.length || 0} />
+          <TooljetDatabasePage totalTables={tables.length || 0} collapseSidebar={collapseSidebar} />
         </TooljetDatabaseContext.Provider>
       </div>
     </Layout>

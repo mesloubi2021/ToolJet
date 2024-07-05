@@ -11,7 +11,7 @@ import useShowPopover from '@/_hooks/useShowPopover';
 import DataSourceIcon from '../QueryManager/Components/DataSourceIcon';
 import { staticDataSources } from '../QueryManager/constants';
 import { Tooltip } from 'react-tooltip';
-import { PillButton } from '../QueryManager/QueryEditors/Runjs/ParameterDetails';
+import { PillButton } from '../QueryManager/Components/ParameterDetails';
 
 const FilterandSortPopup = ({ darkMode, selectedDataSources, onFilterDatasourcesChange, clearSelectedDataSources }) => {
   const [showMenu, setShowMenu] = useShowPopover(false, '#query-sort-filter-popover', '#query-sort-filter-popover-btn');
@@ -259,6 +259,7 @@ const DataSourceSelector = ({
             onChange={(e) => setSearch(e.target.value)}
             ref={searchBoxRef}
             value={search}
+            data-cy="input-query-ds-filter"
           />
         </div>
       </div>
@@ -279,7 +280,10 @@ const DataSourceSelector = ({
               label={
                 <div className="d-flex align-items-center">
                   <DataSourceIcon source={source} height={12} styles={{ minWidth: 12 }} />
-                  &nbsp;<span className="ms-1 text-truncate">{source.name}</span>
+                  &nbsp;
+                  <span className="ms-1 text-truncate" data-cy={`ds-filter-${source.name.toLowerCase()}`}>
+                    {source.name}
+                  </span>
                 </div>
               }
             />
@@ -306,8 +310,8 @@ const MenuButton = ({
   };
 
   return (
-    <div className={`field p-2 ${noMargin ? '' : 'mx-1'} tj-list-btn`}>
-      <Button.UnstyledButton onClick={handleOnClick} disabled={disabled} classNames="d-flex justify-content-between">
+    <div className={`field ${noMargin ? '' : 'mx-1'} tj-list-btn`}>
+      <Button.UnstyledButton onClick={handleOnClick} disabled={disabled} classNames="d-flex justify-content-between p-2">
         <Button.Content title={text} iconSrc={iconSrc} direction="left" />
         {active && <Tick width="20" height="20" viewBox="0 0 22 22" fill="var(--indigo9)" />}
       </Button.UnstyledButton>

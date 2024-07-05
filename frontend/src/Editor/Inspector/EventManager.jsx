@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { ActionTypes } from '../ActionTypes';
 import OverlayTrigger from 'react-bootstrap/OverlayTrigger';
 import Popover from 'react-bootstrap/Popover';
-import { CodeHinter } from '../CodeBuilder/CodeHinter';
 import { GotoApp } from './ActionConfigurationPanels/GotoApp';
 import { SwitchPage } from './ActionConfigurationPanels/SwitchPage';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
@@ -14,25 +13,34 @@ import defaultStyles from '@/_ui/Select/styles';
 import { useTranslation } from 'react-i18next';
 import { useDataQueriesStore } from '@/_stores/dataQueriesStore';
 import RunjsParameters from './ActionConfigurationPanels/RunjsParamters';
-import AddNewButton from '@/ToolJetUI/Buttons/AddNewButton/AddNewButton';
+import { useAppDataActions, useAppDataStore } from '@/_stores/appDataStore';
 import { isQueryRunnable } from '@/_helpers/utils';
 import { shallow } from 'zustand/shallow';
-import ManageEventButton from './ManageEventButton';
+import AddNewButton from '@/ToolJetUI/Buttons/AddNewButton/AddNewButton';
 import NoListItem from './Components/Table/NoListItem';
+import ManageEventButton from './ManageEventButton';
+import { EditorContext } from '../Context/EditorContextWrapper';
+import CodeHinter from '../CodeEditor';
+// eslint-disable-next-line import/no-unresolved
+import { diff } from 'deep-object-diff';
+import { useEditorStore } from '@/_stores/editorStore';
+import { handleLowPriorityWork } from '@/_helpers/editorHelpers';
+import { appService } from '@/_services';
+import { deepClone } from '@/_helpers/utilities/utils.helpers';
 
 export const EventManager = ({
-  component,
-  componentMeta,
-  currentState = {},
+  sourceId,
+  eventSourceType,
+  eventMetaDefinition,
   components,
-  eventsChanged,
-  apps,
   excludeEvents,
   popOverCallback,
   popoverPlacement,
   pages,
   hideEmptyEventsAlert,
   callerQueryId,
+  customEventRefs = undefined,
+  component,
 }) => {
   const dataQueries = useDataQueriesStore(({ dataQueries = [] }) => {
     if (callerQueryId) {
@@ -41,22 +49,69 @@ export const EventManager = ({
     }
     return dataQueries;
   }, shallow);
-  const [events, setEvents] = useState(() => component.component.definition.events || []);
+
+  const {
+    appId,
+    events: allAppEvents,
+    eventsUpdatedLoader,
+    eventsCreatedLoader,
+    actionsUpdatedLoader,
+    eventToDeleteLoaderIndex,
+    setEventToDeleteLoaderIndex,
+  } = useAppDataStore((state) => ({
+    appId: state.appId,
+    events: state.events,
+    eventsUpdatedLoader: state.eventsUpdatedLoader,
+    eventsCreatedLoader: state.eventsCreatedLoader,
+    actionsUpdatedLoader: state.actionsUpdatedLoader,
+    eventToDeleteLoaderIndex: state.eventToDeleteLoaderIndex,
+    setEventToDeleteLoaderIndex: state.actions.setEventToDeleteLoaderIndex,
+  }));
+
+  const { handleYmapEventUpdates } = useContext(EditorContext) || {};
+
+  const { updateAppVersionEventHandlers, createAppVersionEventHandlers, deleteAppVersionEventHandler, updateState } =
+    useAppDataActions();
+
+  const currentEvents = allAppEvents?.filter((event) => {
+    if (customEventRefs) {
+      if (event.event.ref !== customEventRefs.ref) {
+        return false;
+      }
+    }
+
+    return event.sourceId === sourceId && event.target === eventSourceType;
+  });
+
+  const [events, setEvents] = useState([]);
   const [focusedEventIndex, setFocusedEventIndex] = useState(null);
+
   const { t } = useTranslation();
 
   useEffect(() => {
-    setEvents(component.component.definition.events || []);
-  }, [component?.component?.definition?.events]);
+    handleYmapEventUpdates && handleYmapEventUpdates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify({ allAppEvents })]);
+
+  useEffect(() => {
+    if (_.isEqual(currentEvents, events)) return;
+
+    const sortedEvents = currentEvents.sort((a, b) => {
+      return a.index - b.index;
+    });
+
+    setEvents(sortedEvents || []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(currentEvents)]);
 
   let actionOptions = ActionTypes.map((action) => {
     return { name: action.name, value: action.id };
   });
 
-  let checkIfClicksAreInsideOf = document.querySelector('#cm-complete-0');
+  let checkIfClicksAreInsideOf = document.querySelector('.cm-completionListIncompleteBottom');
   // Listen for click events on body
   if (checkIfClicksAreInsideOf) {
-    document.body.addEventListener('click', function (event) {
+    document.body.addEventListener('mousedown', function (event) {
       if (checkIfClicksAreInsideOf.contains(event.target)) {
         event.stopPropagation();
       }
@@ -100,11 +155,11 @@ export const EventManager = ({
   excludeEvents = excludeEvents || [];
 
   /* Filter events based on excludesEvents ( a list of event ids to exclude ) */
-  let possibleEvents = Object.keys(componentMeta.events)
+  let possibleEvents = Object.keys(eventMetaDefinition.events)
     .filter((eventId) => !excludeEvents.includes(eventId))
     .map((eventId) => {
       return {
-        name: componentMeta.events[eventId].displayName,
+        name: eventMetaDefinition?.events[eventId]?.displayName,
         value: eventId,
       };
     });
@@ -151,7 +206,7 @@ export const EventManager = ({
     const actions = targetComponentMeta.actions;
 
     const options = actions.map((action) => ({
-      name: action.displayName,
+      name: action?.displayName,
       value: action.handle,
     }));
 
@@ -172,17 +227,33 @@ export const EventManager = ({
 
   function getComponentActionDefaultParams(componentId, actionHandle) {
     const action = getAction(componentId, actionHandle);
-    const defaultParams = (action.params ?? []).map((param) => ({
+    const defaultParams = (action?.params ?? []).map((param) => ({
       handle: param.handle,
       value: param.defaultValue,
     }));
     return defaultParams;
   }
 
-  function getAllApps() {
+  const fetchApps = async (page) => {
+    const { apps } = await appService.getAll(page);
+
+    updateState({
+      apps: apps.map((app) => ({
+        id: app.id,
+        name: app.name,
+        slug: app.slug,
+        current_version_id: app.current_version_id,
+      })),
+    });
+
+    return apps;
+  };
+
+  async function getAllApps() {
+    const apps = await fetchApps(0);
     let appsOptionsList = [];
     apps
-      .filter((item) => item.slug !== undefined)
+      .filter((item) => item.slug !== undefined && item.id !== appId && item.current_version_id)
       .forEach((item) => {
         appsOptionsList.push({
           name: item.name,
@@ -194,6 +265,9 @@ export const EventManager = ({
 
   function getPageOptions(event) {
     // If disabled page is already selected then don't remove from page options
+
+    if (!Array.isArray(pages) || pages.length === 0) return [];
+
     if (pages.find((page) => page.id === event.pageId)?.disabled) {
       return pages.map((page) => ({
         name: page.name,
@@ -208,51 +282,122 @@ export const EventManager = ({
       }));
   }
 
-  function handlerChanged(index, param, value) {
-    let newEvents = [...events];
-
+  function handleQueryChange(index, updates) {
+    let newEvents = deepClone(events);
     let updatedEvent = newEvents[index];
-    updatedEvent[param] = value;
+
+    updatedEvent.event = {
+      ...updatedEvent.event,
+      ...updates,
+    };
 
     newEvents[index] = updatedEvent;
 
-    setEvents(newEvents);
-    eventsChanged(newEvents);
+    updateAppVersionEventHandlers(
+      [
+        {
+          event_id: updatedEvent.id,
+          diff: updatedEvent,
+        },
+      ],
+      'update'
+    );
+  }
+
+  function handlerChanged(index, param, value) {
+    let newEvents = deepClone(events);
+
+    let updatedEvent = newEvents[index];
+    updatedEvent.event[param] = value;
+
+    // Remove debounce key if it's empty
+    if (param === 'debounce' && value === '') {
+      delete updatedEvent.event.debounce;
+    }
+
+    if (param === 'componentSpecificActionHandle') {
+      const getDefault = getComponentActionDefaultParams(updatedEvent.event?.componentId, value);
+      updatedEvent.event['componentSpecificActionParams'] = getDefault;
+    }
+
+    const shouldUpdateEvent = !_.isEmpty(diff(events[index], updatedEvent));
+
+    if (!shouldUpdateEvent) return;
+
+    const eventSourceid = updatedEvent?.sourceId;
+
+    useEditorStore.getState().actions.updateComponentsNeedsUpdateOnNextRender([eventSourceid]);
+
+    newEvents[index] = updatedEvent;
+
+    handleLowPriorityWork(() => {
+      updateAppVersionEventHandlers(
+        [
+          {
+            event_id: updatedEvent.id,
+            diff: updatedEvent,
+          },
+        ],
+        'update',
+        param
+      );
+    });
   }
 
   function removeHandler(index) {
-    let newEvents = component.component.definition.events;
-    newEvents.splice(index, 1);
-    setEvents(newEvents);
-    eventsChanged(newEvents);
+    const eventsHandler = deepClone(events);
+
+    const eventId = eventsHandler[index].id;
+    setEventToDeleteLoaderIndex(index);
+    deleteAppVersionEventHandler(eventId);
   }
 
   function addHandler() {
-    let newEvents = component.component.definition.events;
-    newEvents.push({
-      eventId: Object.keys(componentMeta.events)[0],
-      actionId: 'show-alert',
-      message: 'Hello world!',
-      alertType: 'info',
+    let newEvents = events;
+    const eventIndex = newEvents.length;
+    createAppVersionEventHandlers({
+      event: {
+        eventId: Object.keys(eventMetaDefinition?.events)[0],
+        actionId: 'show-alert',
+        message: 'Hello world!',
+        alertType: 'info',
+        ...customEventRefs,
+      },
+      eventType: eventSourceType,
+      attachedTo: sourceId,
+      index: eventIndex,
     });
-    setEvents(newEvents);
-    eventsChanged(newEvents);
+
+    handleYmapEventUpdates();
   }
 
   //following two are functions responsible for on change and value for the control specific actions
   const onChangeHandlerForComponentSpecificActionHandle = (value, index, param, event) => {
     const newParam = { ...param, value: value };
     const params = event?.componentSpecificActionParams ?? [];
-    const newParams = params.map((paramOfParamList) =>
-      paramOfParamList.handle === param.handle ? newParam : paramOfParamList
-    );
+
+    const newParams =
+      params.length > 0
+        ? params.map((paramOfParamList) => {
+            return paramOfParamList.handle === param.handle ? newParam : paramOfParamList;
+          })
+        : [newParam];
+
     return handlerChanged(index, 'componentSpecificActionParams', newParams);
   };
   const valueForComponentSpecificActionHandle = (event, param) => {
-    return (
-      event?.componentSpecificActionParams?.find((paramItem) => paramItem.handle === param.handle)?.value ??
-      param.defaultValue
-    );
+    const componentSpecificActionParamsExits = Array.isArray(event?.componentSpecificActionParams);
+    const defaultValue = param.defaultValue ?? '';
+
+    if (componentSpecificActionParamsExits) {
+      const paramValue =
+        event?.componentSpecificActionParams?.find((paramItem) => paramItem.handle === param.handle)?.value ??
+        defaultValue;
+
+      return paramValue;
+    }
+
+    return defaultValue;
   };
 
   function eventPopover(event, index) {
@@ -260,10 +405,14 @@ export const EventManager = ({
       <Popover
         id="popover-basic"
         style={{ width: '350px', maxWidth: '350px' }}
-        className={`${darkMode && ' dark-theme'} shadow event-manager-popover`}
+        className={`${darkMode && 'dark-theme'} shadow`}
         data-cy="popover-card"
       >
-        <Popover.Body>
+        <Popover.Body
+          onClick={(e) => {
+            e.stopPropagation();
+          }}
+        >
           <div className="row">
             <div className="col-3 p-2">
               <span data-cy="event-label">{t('editor.inspector.eventManager.event', 'Event')}</span>
@@ -307,10 +456,11 @@ export const EventManager = ({
             </div>
             <div className="col-9" data-cy="alert-message-type">
               <CodeHinter
-                theme={darkMode ? 'monokai' : 'default'}
+                type="basic"
                 initialValue={event.runOnlyIf}
                 onChange={(value) => handlerChanged(index, 'runOnlyIf', value)}
                 usePortalEditor={false}
+                component={component}
               />
             </div>
           </div>
@@ -329,10 +479,12 @@ export const EventManager = ({
                   </div>
                   <div className="col-9" data-cy="alert-message-input-field">
                     <CodeHinter
+                      type="basic"
                       theme={darkMode ? 'monokai' : 'default'}
                       initialValue={event.message}
                       onChange={(value) => handlerChanged(index, 'message', value)}
                       usePortalEditor={false}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -361,17 +513,18 @@ export const EventManager = ({
               <div className="p-1">
                 <label className="form-label mt-1">{t('editor.inspector.eventManager.url', 'URL')}</label>
                 <CodeHinter
-                  theme={darkMode ? 'monokai' : 'default'}
+                  type="basic"
                   initialValue={event.url}
                   onChange={(value) => handlerChanged(index, 'url', value)}
                   usePortalEditor={false}
+                  component={component}
                 />
               </div>
             )}
 
             {event.actionId === 'go-to-app' && (
               <GotoApp
-                event={event}
+                event={deepClone(event)}
                 handlerChanged={handlerChanged}
                 eventIndex={index}
                 getAllApps={getAllApps}
@@ -425,10 +578,11 @@ export const EventManager = ({
               <div className="p-1">
                 <label className="form-label mt-1">{t('editor.inspector.eventManager.text', 'Text')}</label>
                 <CodeHinter
-                  theme={darkMode ? 'monokai' : 'default'}
+                  type="basic"
                   initialValue={event.contentToCopy}
                   onChange={(value) => handlerChanged(index, 'contentToCopy', value)}
                   usePortalEditor={false}
+                  component={component}
                 />
               </div>
             )}
@@ -443,10 +597,11 @@ export const EventManager = ({
                       options={dataQueries
                         .filter((qry) => isQueryRunnable(qry))
                         .map((qry) => ({ name: qry.name, value: qry.id }))}
-                      value={event.queryId}
+                      value={event?.queryId}
                       search={true}
                       onChange={(value) => {
                         const query = dataQueries.find((dataquery) => dataquery.id === value);
+
                         const parameters = (query?.options?.parameters ?? []).reduce(
                           (paramObj, param) => ({
                             ...paramObj,
@@ -454,9 +609,12 @@ export const EventManager = ({
                           }),
                           {}
                         );
-                        handlerChanged(index, 'queryId', query.id);
-                        handlerChanged(index, 'queryName', query.name);
-                        handlerChanged(index, 'parameters', parameters);
+
+                        handleQueryChange(index, {
+                          queryId: query.id,
+                          queryName: query.name,
+                          parameters: parameters,
+                        });
                       }}
                       placeholder={t('globals.select', 'Select') + '...'}
                       styles={styles}
@@ -475,11 +633,11 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.key', 'Key')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.key}
                       onChange={(value) => handlerChanged(index, 'key', value)}
-                      enablePreview={true}
                       usePortalEditor={false}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -487,11 +645,11 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.value', 'Value')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.value}
                       onChange={(value) => handlerChanged(index, 'value', value)}
-                      enablePreview={true}
                       usePortalEditor={false}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -525,10 +683,10 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.fileName', 'File name')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.fileName}
                       onChange={(value) => handlerChanged(index, 'fileName', value)}
-                      enablePreview={true}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -536,10 +694,10 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.data', 'Data')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.data}
                       onChange={(value) => handlerChanged(index, 'data', value)}
-                      enablePreview={true}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -569,11 +727,11 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.pageIndex', 'Page index')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.pageIndex ?? '{{1}}'}
                       onChange={(value) => handlerChanged(index, 'pageIndex', value)}
-                      enablePreview={true}
                       usePortalEditor={false}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -585,11 +743,12 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.key', 'Key')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.key}
                       onChange={(value) => handlerChanged(index, 'key', value)}
                       enablePreview={true}
-                      cyLabel={`key`}
+                      cyLabel={`event-key`}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -597,11 +756,11 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.value', 'Value')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.value}
                       onChange={(value) => handlerChanged(index, 'value', value)}
-                      enablePreview={true}
                       cyLabel={`variable`}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -613,10 +772,10 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.key', 'Key')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.key}
                       onChange={(value) => handlerChanged(index, 'key', value)}
-                      enablePreview={true}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -628,11 +787,11 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.key', 'Key')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.key}
                       onChange={(value) => handlerChanged(index, 'key', value)}
-                      enablePreview={true}
                       cyLabel={`key`}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -640,11 +799,11 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.value', 'Value')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.value}
                       onChange={(value) => handlerChanged(index, 'value', value)}
-                      enablePreview={true}
                       cyLabel={`variable`}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -656,11 +815,11 @@ export const EventManager = ({
                   <div className="col-3 p-2">{t('editor.inspector.eventManager.key', 'Key')}</div>
                   <div className="col-9">
                     <CodeHinter
-                      theme={darkMode ? 'monokai' : 'default'}
+                      type="basic"
                       initialValue={event.key}
                       onChange={(value) => handlerChanged(index, 'key', value)}
-                      enablePreview={true}
                       cyLabel={`key`}
+                      component={component}
                     />
                   </div>
                 </div>
@@ -668,7 +827,7 @@ export const EventManager = ({
             )}
             {event.actionId === 'switch-page' && (
               <SwitchPage
-                event={event}
+                event={deepClone(event)}
                 handlerChanged={handlerChanged}
                 eventIndex={index}
                 getPages={() => getPageOptions(event)}
@@ -688,7 +847,6 @@ export const EventManager = ({
                       value={event?.componentId}
                       search={true}
                       onChange={(value) => {
-                        handlerChanged(index, 'componentSpecificActionHandle', '');
                         handlerChanged(index, 'componentId', value);
                       }}
                       placeholder={t('globals.select', 'Select') + '...'}
@@ -710,11 +868,6 @@ export const EventManager = ({
                       search={true}
                       onChange={(value) => {
                         handlerChanged(index, 'componentSpecificActionHandle', value);
-                        handlerChanged(
-                          index,
-                          'componentSpecificActionParams',
-                          getComponentActionDefaultParams(event?.componentId, value)
-                        );
                       }}
                       placeholder={t('globals.select', 'Select') + '...'}
                       styles={styles}
@@ -725,10 +878,10 @@ export const EventManager = ({
                 </div>
                 {event?.componentId &&
                   event?.componentSpecificActionHandle &&
-                  (getAction(event?.componentId, event?.componentSpecificActionHandle).params ?? []).map((param) => (
+                  (getAction(event?.componentId, event?.componentSpecificActionHandle)?.params ?? []).map((param) => (
                     <div className="row mt-2" key={param.handle}>
-                      <div className="col-3 p-1" data-cy={`action-options-${param.displayName}-field-label`}>
-                        {param.displayName}
+                      <div className="col-3 p-1" data-cy={`action-options-${param?.displayName}-field-label`}>
+                        {param?.displayName}
                       </div>
                       {param.type === 'select' ? (
                         <div className="col-9" data-cy="action-options-action-selection-field">
@@ -749,21 +902,22 @@ export const EventManager = ({
                       ) : (
                         <div
                           className={`${
-                            param?.type ? 'col-7' : 'col-9 fx-container-eventmanager-code'
-                          } fx-container-eventmanager ${param.type == 'select' && 'component-action-select'}`}
+                            param?.type ? '' : 'fx-container-eventmanager-code'
+                          } col-9 fx-container-eventmanager ${param.type == 'select' && 'component-action-select'}`}
                           data-cy="action-options-text-input-field"
                         >
                           <CodeHinter
-                            theme={darkMode ? 'monokai' : 'default'}
-                            mode="javascript"
+                            type="fxEditor"
                             initialValue={valueForComponentSpecificActionHandle(event, param)}
                             onChange={(value) => {
                               onChangeHandlerForComponentSpecificActionHandle(value, index, param, event);
                             }}
-                            enablePreview={true}
-                            type={param?.type}
+                            paramType={param?.type}
+                            paramLabel={' '}
                             fieldMeta={{ options: param?.options }}
-                            cyLabel={param.displayName}
+                            cyLabel={`event-${param.displayName}`}
+                            component={component}
+                            isEventManagerParam={true}
                           />
                         </div>
                       )}
@@ -773,12 +927,13 @@ export const EventManager = ({
             )}
             <div className="row mt-3">
               <div className="col-3 p-2">{t('editor.inspector.eventManager.debounce', 'Debounce')}</div>
-              <div className="col-9" data-cy="debounce-input-field">
+              <div className="col-9">
                 <CodeHinter
-                  theme={darkMode ? 'monokai' : 'default'}
+                  type="basic"
                   initialValue={event.debounce}
                   onChange={(value) => handlerChanged(index, 'debounce', value)}
                   usePortalEditor={false}
+                  component={component}
                 />
               </div>
             </div>
@@ -789,11 +944,24 @@ export const EventManager = ({
   }
 
   const reorderEvents = (startIndex, endIndex) => {
-    const result = [...component.component.definition.events];
+    const result = deepClone(events);
     const [removed] = result.splice(startIndex, 1);
     result.splice(endIndex, 0, removed);
-    setEvents(result);
-    eventsChanged(result, true);
+
+    const reorderedEvents = result.map((event, index) => {
+      return {
+        ...event,
+        index: index,
+      };
+    });
+
+    updateAppVersionEventHandlers(
+      reorderedEvents.map((event) => ({
+        event_id: event.id,
+        diff: event,
+      })),
+      'reorder'
+    );
   };
 
   const onDragEnd = ({ source, destination }) => {
@@ -804,7 +972,6 @@ export const EventManager = ({
   };
 
   const renderDraggable = useDraggableInPortal();
-
   const renderHandlers = (events) => {
     return (
       <DragDropContext
@@ -817,8 +984,8 @@ export const EventManager = ({
           {({ innerRef, droppableProps, placeholder }) => (
             <div {...droppableProps} ref={innerRef}>
               {events.map((event, index) => {
-                const actionMeta = ActionTypes.find((action) => action.id === event.actionId);
-                const rowClassName = `card-body p-0 ${focusedEventIndex === index ? ' bg-azure-lt' : ''}`;
+                const actionMeta = ActionTypes.find((action) => action.id === event.event.actionId);
+                // const rowClassName = `card-body p-0 ${focusedEventIndex === index ? ' bg-azure-lt' : ''}`;
                 return (
                   <Draggable key={index} draggableId={`${event.eventId}-${index}`} index={index}>
                     {renderDraggable((provided, snapshot) => {
@@ -831,14 +998,13 @@ export const EventManager = ({
                           trigger="click"
                           placement={popoverPlacement || 'left'}
                           rootClose={true}
-                          overlay={eventPopover(event, index)}
+                          overlay={eventPopover(event.event, index)}
                           onHide={() => setFocusedEventIndex(null)}
                           onToggle={(showing) => {
                             if (showing) {
                               setFocusedEventIndex(index);
                             } else {
                               setFocusedEventIndex(null);
-                              eventsChanged(events);
                             }
                             if (typeof popOverCallback === 'function') popOverCallback(showing);
                           }}
@@ -850,11 +1016,16 @@ export const EventManager = ({
                             {...provided.dragHandleProps}
                           >
                             <ManageEventButton
-                              eventDisplayName={componentMeta.events[event.eventId]['displayName']}
+                              eventDisplayName={eventMetaDefinition?.events[event.event.eventId]?.displayName}
                               actionName={actionMeta.name}
                               removeHandler={removeHandler}
                               index={index}
                               darkMode={darkMode}
+                              actionsUpdatedLoader={index === focusedEventIndex ? actionsUpdatedLoader : false}
+                              eventsUpdatedLoader={index === focusedEventIndex ? eventsUpdatedLoader : false}
+                              eventsDeletedLoader={
+                                index === eventToDeleteLoaderIndex ? !!eventToDeleteLoaderIndex : false
+                              }
                             />
                           </div>
                         </OverlayTrigger>
@@ -873,7 +1044,7 @@ export const EventManager = ({
 
   const renderAddHandlerBtn = () => {
     return (
-      <AddNewButton onClick={addHandler} dataCy="add-event-handler" className="mt-0">
+      <AddNewButton onClick={addHandler} dataCy="add-event-handler" className="mt-0" isLoading={eventsCreatedLoader}>
         {t('editor.inspector.eventManager.addHandler', 'New event handler')}
       </AddNewButton>
     );
@@ -888,12 +1059,33 @@ export const EventManager = ({
     );
   }
 
+  const componentName = eventMetaDefinition?.name ? eventMetaDefinition.name : 'query';
+
+  if (events.length === 0) {
+    return (
+      <>
+        {renderAddHandlerBtn()}
+        {!hideEmptyEventsAlert ? (
+          <div className="text-left">
+            <small className="color-disabled" data-cy="no-event-handler-message">
+              {t(
+                'editor.inspector.eventManager.emptyMessage',
+                "This {{componentName}} doesn't have any event handlers",
+                {
+                  componentName: componentName.toLowerCase(),
+                }
+              )}
+            </small>
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
   return (
     <>
-      <div className="mb-3">
-        {renderHandlers(events)}
-        {renderAddHandlerBtn()}
-      </div>
+      {renderHandlers(events)}
+      {renderAddHandlerBtn()}
     </>
   );
 };

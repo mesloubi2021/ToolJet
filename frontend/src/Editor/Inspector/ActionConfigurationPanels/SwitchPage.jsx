@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import Select from '@/_ui/Select';
 import defaultStyles from '@/_ui/Select/styles';
-import { CodeHinter } from '../../CodeBuilder/CodeHinter';
 import { useTranslation } from 'react-i18next';
+import CodeHinter from '@/Editor/CodeEditor';
 
 export function SwitchPage({ getPages, event, handlerChanged, eventIndex, darkMode }) {
   const queryParamChangeHandler = (index, key, value) => {
@@ -69,22 +69,22 @@ export function SwitchPage({ getPages, event, handlerChanged, eventIndex, darkMo
           <div key={index} className="row input-group mt-1">
             <div className="col">
               <CodeHinter
-                initialValue={event.queryParams[index][0]}
+                type="basic"
+                initialValue={event?.queryParams?.[index]?.[0]}
                 onChange={(value) => queryParamChangeHandler(index, 0, value)}
-                mode="javascript"
                 className="form-control codehinter-query-editor-input"
                 height={30}
-                cyLabel={`query-param-key`}
+                cyLabel={`event-query-param-key`}
               />
             </div>
             <div className="col">
               <CodeHinter
-                initialValue={event.queryParams[index][1]}
+                type="basic"
+                initialValue={event?.queryParams?.[index]?.[1]}
                 onChange={(value) => queryParamChangeHandler(index, 1, value)}
-                mode="javascript"
                 className="form-control codehinter-query-editor-input"
                 height={30}
-                cyLabel={`query-param-value`}
+                cyLabel={`event-query-param-value`}
               />
             </div>
             <span className="btn-sm col-auto my-1" role="button" onClick={() => deleteQueryParam(index)}>

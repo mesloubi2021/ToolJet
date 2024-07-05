@@ -5,9 +5,10 @@ import { components } from 'react-select';
 import { EditVersion } from './EditVersionModal';
 import { CreateVersion } from './CreateVersionModal';
 import { ConfirmDialog } from '@/_components';
-import { defaultAppEnvironments } from '@/_helpers/utils';
+import { defaultAppEnvironments, decodeEntities } from '@/_helpers/utils';
 
-const Menu = (props) => {
+export const Menu = (props) => {
+  const isEditable = props.selectProps.isEditable;
   return (
     <components.Menu {...props}>
       <div>
@@ -18,9 +19,9 @@ const Menu = (props) => {
         >
           <div className="row" style={{ padding: '8px 12px' }}>
             <div className="col-10 text-truncate tj-text-xsm color-slate12">
-              {props?.selectProps?.value?.appVersionName}
+              {props?.selectProps?.value?.appVersionName && decodeEntities(props?.selectProps?.value?.appVersionName)}
             </div>
-            {!props?.selectProps?.value?.isReleasedVersion && (
+            {isEditable && !props?.selectProps?.value?.isReleasedVersion && (
               <div className="col-1">
                 <svg
                   className="icon"
@@ -30,7 +31,7 @@ const Menu = (props) => {
                   fill="none"
                   xmlns="http://www.w3.org/2000/svg"
                 >
-                  <rect width="28" height="28" rx="6" fill="#F0F4FF" />
+                  <rect width="28" height="28" rx="6" fill="var(--indigo3)" />
                   <path
                     fillRule="evenodd"
                     clipRule="evenodd"
@@ -44,35 +45,37 @@ const Menu = (props) => {
         </div>
         <hr className="m-0" />
         <div>{props.children}</div>
-        <div
-          className="cursor-pointer tj-text-xsm"
-          style={{ padding: '8px 12px', color: '#3E63DD' }}
-          onClick={() => props.selectProps.setShowCreateAppVersion(true)}
-        >
-          <svg
-            className="icon me-1"
-            width="34"
-            height="34"
-            viewBox="0 0 34 34"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
+        {isEditable && (
+          <div
+            className="cursor-pointer tj-text-xsm"
+            style={{ padding: '8px 12px', color: '#3E63DD' }}
+            onClick={() => props.selectProps.setShowCreateAppVersion(true)}
           >
-            <rect width="34" height="34" rx="6" fill="#F0F4FF" />
-            <path
-              fillRule="evenodd"
-              clipRule="evenodd"
-              d="M17 11C17.4142 11 17.75 11.3358 17.75 11.75V16.25H22.25C22.6642 16.25 23 16.5858 23 17C23 17.4142 22.6642 17.75 22.25 17.75H17.75V22.25C17.75 22.6642 17.4142 23 17 23C16.5858 23 16.25 22.6642 16.25 22.25V17.75H11.75C11.3358 17.75 11 17.4142 11 17C11 16.5858 11.3358 16.25 11.75 16.25H16.25V11.75C16.25 11.3358 16.5858 11 17 11Z"
-              fill="#3E63DD"
-            />
-          </svg>
-          Create new version
-        </div>
+            <svg
+              className="icon me-1"
+              width="34"
+              height="34"
+              viewBox="0 0 34 34"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <rect width="34" height="34" rx="6" fill="var(--indigo3)" />
+              <path
+                fillRule="evenodd"
+                clipRule="evenodd"
+                d="M17 11C17.4142 11 17.75 11.3358 17.75 11.75V16.25H22.25C22.6642 16.25 23 16.5858 23 17C23 17.4142 22.6642 17.75 22.25 17.75H17.75V22.25C17.75 22.6642 17.4142 23 17 23C16.5858 23 16.25 22.6642 16.25 22.25V17.75H11.75C11.3358 17.75 11 17.4142 11 17C11 16.5858 11.3358 16.25 11.75 16.25H16.25V11.75C16.25 11.3358 16.5858 11 17 11Z"
+                fill="#3E63DD"
+              />
+            </svg>
+            Create new version
+          </div>
+        )}
       </div>
     </components.Menu>
   );
 };
 
-const SingleValue = ({ selectProps }) => {
+export const SingleValue = ({ selectProps }) => {
   return (
     <div className="d-inline-flex align-items-center" data-cy="app-version-label" style={{ gap: '8px' }}>
       <div className="d-inline-flex align-items-center" style={{ gap: '2px' }}>
@@ -100,26 +103,30 @@ const SingleValue = ({ selectProps }) => {
         className={cx('app-version-name text-truncate', { 'color-light-green': selectProps.value.isReleasedVersion })}
         data-cy={`${selectProps.value?.appVersionName}-current-version-text`}
       >
-        {selectProps.value?.appVersionName}
+        {selectProps.value?.appVersionName && decodeEntities(selectProps.value?.appVersionName)}
       </div>
     </div>
   );
 };
-
 export const CustomSelect = ({ ...props }) => {
   const [showEditAppVersion, setShowEditAppVersion] = useState(false);
   const [showCreateAppVersion, setShowCreateAppVersion] = useState(false);
 
-  const { deleteVersion, deleteAppVersion, resetDeleteModal } = props;
+  const { deleteVersion, deleteAppVersion, resetDeleteModal, isEditable } = props;
 
   return (
     <>
-      <CreateVersion
-        {...props}
-        showCreateAppVersion={showCreateAppVersion}
-        setShowCreateAppVersion={setShowCreateAppVersion}
-      />
-      <EditVersion {...props} showEditAppVersion={showEditAppVersion} setShowEditAppVersion={setShowEditAppVersion} />
+      {isEditable && showCreateAppVersion && (
+        <CreateVersion
+          {...props}
+          showCreateAppVersion={showCreateAppVersion}
+          setShowCreateAppVersion={setShowCreateAppVersion}
+        />
+      )}
+
+      {isEditable && (
+        <EditVersion {...props} showEditAppVersion={showEditAppVersion} setShowEditAppVersion={setShowEditAppVersion} />
+      )}
       {/*  When we merge this code to EE update the defaultAppEnvironments object with rest of default environments (then delete this comment)*/}
       <ConfirmDialog
         show={deleteVersion.showModal}
@@ -127,7 +134,7 @@ export const CustomSelect = ({ ...props }) => {
           defaultAppEnvironments.length > 1
             ? 'Deleting a version will permanently remove it from all environments.'
             : ''
-        }Are you sure you want to delete this version - ${deleteVersion.versionName}?`}
+        }Are you sure you want to delete this version - ${decodeEntities(deleteVersion.versionName)}?`}
         onConfirm={() => deleteAppVersion(deleteVersion.versionId, deleteVersion.versionName)}
         onCancel={resetDeleteModal}
       />

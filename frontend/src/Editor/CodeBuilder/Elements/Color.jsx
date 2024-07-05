@@ -2,11 +2,24 @@ import React, { useState } from 'react';
 import { SketchPicker } from 'react-color';
 import OverlayTrigger from 'react-bootstrap/OverlayTrigger';
 import Popover from 'react-bootstrap/Popover';
+import classNames from 'classnames';
+import { computeColor } from '@/_helpers/utils';
 
-export const Color = ({ value, onChange, pickerStyle = {}, cyLabel, asBoxShadowPopover = true }) => {
+export const Color = ({
+  value,
+  onChange,
+  pickerStyle = {},
+  cyLabel,
+  asBoxShadowPopover = true,
+  meta,
+  component,
+  styleDefinition,
+}) => {
+  value = component == 'Button' ? computeColor(styleDefinition, value, meta) : value;
+
   const [showPicker, setShowPicker] = useState(false);
   const darkMode = localStorage.getItem('darkMode') === 'true';
-
+  const colorPickerPosition = meta?.colorPickerPosition ?? '';
   const coverStyles = {
     position: 'fixed',
     top: '0px',
@@ -14,7 +27,6 @@ export const Color = ({ value, onChange, pickerStyle = {}, cyLabel, asBoxShadowP
     bottom: '0px',
     left: '0px',
   };
-
   const outerStyles = {
     width: '142px',
     height: '32px',
@@ -38,8 +50,15 @@ export const Color = ({ value, onChange, pickerStyle = {}, cyLabel, asBoxShadowP
   };
   const eventPopover = () => {
     return (
-      <Popover className={`${darkMode && ' dark-theme'}`}>
-        <Popover.Body className={!asBoxShadowPopover && 'boxshadow-picker'}>
+      <Popover
+        className={classNames(
+          { 'dark-theme': darkMode },
+          // This is fix when color picker don't have much space to open in bottom side
+          { 'inspector-color-input-popover': colorPickerPosition === 'top' }
+        )}
+        style={{ zIndex: 10000 }}
+      >
+        <Popover.Body className={!asBoxShadowPopover && 'boxshadow-picker'} style={{ padding: '0px' }}>
           <>{ColorPicker()}</>
         </Popover.Body>
       </Popover>
@@ -110,7 +129,7 @@ export const Color = ({ value, onChange, pickerStyle = {}, cyLabel, asBoxShadowP
               }}
               show={showPicker}
               trigger="click"
-              placement={'left'}
+              placement={!colorPickerPosition ? 'left' : colorPickerPosition}
               rootClose={true}
               overlay={eventPopover()}
             >

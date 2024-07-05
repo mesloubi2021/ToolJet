@@ -9,13 +9,15 @@ import Remove from '@/_ui/Icon/solidIcons/Remove';
 import Information from '@/_ui/Icon/solidIcons/Information';
 import Icon from '@/_ui/Icon/solidIcons/index';
 import set from 'lodash/set';
-import { cloneDeep, isEmpty } from 'lodash';
+import { isEmpty } from 'lodash';
 import { getPrivateRoute } from '@/_helpers/routes';
 import { useNavigate } from 'react-router-dom';
 import useConfirm from './Confirm';
+import { deepClone } from '@/_helpers/utilities/utils.helpers';
 
 const JoinConstraint = ({ darkMode, index, onRemove, onChange, data }) => {
-  const { selectedTableId, tables, joinOptions, findTableDetails } = useContext(TooljetDatabaseContext);
+  const { selectedTableId, tables, joinOptions, findTableDetails, tableForeignKeyInfo } =
+    useContext(TooljetDatabaseContext);
   const joinType = data?.joinType;
   const baseTableDetails = (selectedTableId && findTableDetails(selectedTableId)) || {};
   const conditionsList = isEmpty(data?.conditions?.conditionsList) ? [{}] : data?.conditions?.conditionsList;
@@ -45,18 +47,167 @@ const JoinConstraint = ({ darkMode, index, onRemove, onChange, data }) => {
     });
   tableSet.add(selectedTableId);
 
-  const leftTableList = [...tableSet]
+  // In Joins-Query, the table on the LHS should be the ones which we already selected for base table or the tables which we selected on RHS
+  const leftTableList = [];
+  [...tableSet]
     .filter((table) => table !== rightFieldTable)
-    .map((t) => {
+    .forEach((t) => {
       const tableDetails = findTableDetails(t);
-      return { label: tableDetails?.table_name ?? '', value: t };
+      const targetTableFKListWithAdjacentTable = checkIfAdjacentTableHasForeignKey(true, t?.table_id);
+      if (targetTableFKListWithAdjacentTable.length) {
+        leftTableList.unshift({
+          label: tableDetails?.table_name ?? '',
+          value: t,
+          isTargetTable: !!targetTableFKListWithAdjacentTable.length,
+        });
+      } else {
+        leftTableList.push({
+          label: tableDetails?.table_name ?? '',
+          value: t,
+          isTargetTable: !!targetTableFKListWithAdjacentTable.length,
+        });
+      }
     });
 
-  const tableList = tables
+  // Tables to list on Right-Hand-Side of Join operation, Omits already selected table
+  const tableList = [];
+  tables
     .filter((table) => ![...tableSet, leftFieldTable].includes(table.table_id))
-    .map((t) => {
-      return { label: t?.table_name ?? '', value: t.table_id };
+    .forEach((t) => {
+      const targetTableFKListWithAdjacentTable = checkIfAdjacentTableHasForeignKey(false, t?.table_id);
+      if (targetTableFKListWithAdjacentTable.length) {
+        tableList.unshift({
+          label: t?.table_name ?? '',
+          value: t?.table_id,
+          isTargetTable: !!targetTableFKListWithAdjacentTable.length,
+        });
+      } else {
+        tableList.push({
+          label: t?.table_name ?? '',
+          value: t?.table_id,
+          isTargetTable: !!targetTableFKListWithAdjacentTable.length,
+        });
+      }
     });
+
+  const foreignKeyTableDetails = Object.values(tableForeignKeyInfo)?.flatMap(
+    (foreignKeyDetails) => foreignKeyDetails || []
+  );
+
+  function isMatchingForeignKeyObjects(foreignKeyTableList, tableList) {
+    const foreignKeyObjects = [];
+    for (const fkObject of foreignKeyTableList) {
+      for (const table of tableList) {
+        if (fkObject.referenced_table_id === table.value) {
+          foreignKeyObjects.push(fkObject);
+        }
+      }
+    }
+    return foreignKeyObjects;
+  }
+
+  const foreignKeyDetails = isMatchingForeignKeyObjects(foreignKeyTableDetails, tableList);
+
+  // OnSelecting LHS ro RHS table on Join Operation, Checking if Adjacent table has FK relation and Auto Fill the column values
+  function checkIfAdjacentTableHasForeignKey(isChoosingLHStable, tableId) {
+    if (isChoosingLHStable && rightFieldTable) {
+      const rightFieldTableDetails = findTableDetails(rightFieldTable);
+      if (rightFieldTableDetails?.table_name && tableForeignKeyInfo[rightFieldTableDetails.table_name]) {
+        return tableForeignKeyInfo[rightFieldTableDetails.table_name].filter(
+          (foreignKeyDetail) => foreignKeyDetail.referenced_table_id === tableId
+        );
+      }
+    }
+
+    if (!isChoosingLHStable && leftFieldTable) {
+      const leftFieldTableTableDetails = findTableDetails(leftFieldTable);
+      if (leftFieldTableTableDetails?.table_name && tableForeignKeyInfo[leftFieldTableTableDetails.table_name]) {
+        return tableForeignKeyInfo[leftFieldTableTableDetails.table_name].filter(
+          (foreignKeyDetail) => foreignKeyDetail.referenced_table_id === tableId
+        );
+      }
+    }
+
+    return [];
+  }
+
+  function autoFillColumnIfForeignKeyExists(tableId, isChoosingLHStable) {
+    const adjacentTableForeignKeyDetails = checkIfAdjacentTableHasForeignKey(isChoosingLHStable, tableId);
+    if (isChoosingLHStable) {
+      if (adjacentTableForeignKeyDetails.length) {
+        const newData = deepClone({ ...data });
+        const newConditionsList = adjacentTableForeignKeyDetails.map((adjacentTableForeignKey) => {
+          const { referenced_column_names = [], column_names = [] } = adjacentTableForeignKey;
+          const newCondition = {
+            leftField: {
+              table: tableId,
+              type: 'Column',
+              ...(referenced_column_names[0] && { columnName: referenced_column_names[0] }),
+            },
+            operator: '=',
+            rightField: {
+              table: rightFieldTable,
+              type: 'Column',
+              ...(column_names[0] && { columnName: column_names[0] }),
+            },
+          };
+
+          return newCondition;
+        });
+        set(newData, 'conditions.conditionsList', newConditionsList);
+        onChange(newData);
+      } else {
+        const newData = deepClone({ ...data });
+        const { conditionsList = [{}] } = newData?.conditions || {};
+        const newConditionsList = conditionsList.map((condition) => {
+          const newCondition = { ...condition };
+          set(newCondition, 'leftField.table', tableId);
+          set(newCondition, 'operator', '='); //should we removed when we have more options
+          return newCondition;
+        });
+        set(newData, 'conditions.conditionsList', newConditionsList);
+        // set(newData, 'table', value?.value);
+        onChange(newData);
+      }
+    } else {
+      if (adjacentTableForeignKeyDetails.length) {
+        const newData = deepClone({ ...data });
+        const newConditionsList = adjacentTableForeignKeyDetails.map((adjacentTableForeignKey) => {
+          const { referenced_column_names = [], column_names = [] } = adjacentTableForeignKey;
+          const newCondition = {
+            leftField: {
+              table: leftFieldTable,
+              type: 'Column',
+              ...(column_names[0] && { columnName: column_names[0] }),
+            },
+            operator: '=',
+            rightField: {
+              table: tableId,
+              type: 'Column',
+              ...(referenced_column_names[0] && { columnName: referenced_column_names[0] }),
+            },
+          };
+
+          return newCondition;
+        });
+        set(newData, 'conditions.conditionsList', newConditionsList);
+        set(newData, 'table', tableId);
+        onChange(newData);
+      } else {
+        const newData = deepClone({ ...data });
+        const { conditionsList = [] } = newData?.conditions || {};
+        const newConditionsList = conditionsList.map((condition) => {
+          const newCondition = { ...condition };
+          set(newCondition, 'rightField.table', tableId);
+          set(newCondition, 'operator', '='); //should we removed when we have more options
+          return newCondition;
+        });
+        set(newData, 'conditions.conditionsList', newConditionsList);
+        set(newData, 'table', tableId);
+        onChange(newData);
+      }
+    }
+  }
 
   return (
     <Container fluid className="p-0">
@@ -88,13 +239,22 @@ const JoinConstraint = ({ darkMode, index, onRemove, onChange, data }) => {
           </Col>
         )}
       </Row>
-      <Row className="border rounded mb-2 mx-0">
-        <Col sm="2" className="p-0 border-end">
-          <div className="tj-small-btn px-2">Join</div>
+      <Row className="mb-2 mx-0">
+        <Col sm="2" className="p-0">
+          <div
+            style={{
+              borderRadius: 0,
+              height: '30px',
+            }}
+            className="tj-small-btn px-2 border border-end-0 rounded-start"
+          >
+            Join
+          </div>
         </Col>
-        <Col sm="4" className="p-0 border-end">
+        <Col sm="4" className="p-0">
           {index ? (
             <DropDownSelect
+              buttonClasses="border border-end-0"
               showPlaceHolder
               options={leftTableList}
               darkMode={darkMode}
@@ -109,30 +269,28 @@ const JoinConstraint = ({ darkMode, index, onRemove, onChange, data }) => {
                   result = true;
                 }
 
-                if (result) {
-                  const newData = cloneDeep({ ...data });
-                  const { conditionsList = [{}] } = newData?.conditions || {};
-                  const newConditionsList = conditionsList.map((condition) => {
-                    const newCondition = { ...condition };
-                    set(newCondition, 'leftField.table', value?.value);
-                    set(newCondition, 'operator', '='); //should we removed when we have more options
-                    return newCondition;
-                  });
-                  set(newData, 'conditions.conditionsList', newConditionsList);
-                  // set(newData, 'table', value?.value);
-                  onChange(newData);
-                }
+                if (result) autoFillColumnIfForeignKeyExists(value?.value, true);
               }}
               onAdd={() => navigate(getPrivateRoute('database'))}
               addBtnLabel={'Add new table'}
               value={leftTableList.find((val) => val?.value === leftFieldTable)}
+              shouldShowForeignKeyIcon
             />
           ) : (
-            <div className="tj-small-btn px-2">{baseTableDetails?.table_name ?? ''}</div>
+            <div
+              style={{
+                borderRadius: 0,
+                height: '30px',
+              }}
+              className="tj-small-btn px-2 border border-end-0"
+            >
+              {baseTableDetails?.table_name ?? ''}
+            </div>
           )}
         </Col>
-        <Col sm="1" className="p-0 border-end">
+        <Col sm="1" className="p-0">
           <DropDownSelect
+            buttonClasses="border border-end-0"
             shouldCenterAlignText
             options={staticJoinOperationsList}
             darkMode={darkMode}
@@ -151,6 +309,7 @@ const JoinConstraint = ({ darkMode, index, onRemove, onChange, data }) => {
         </Col>
         <Col sm="5" className="p-0">
           <DropDownSelect
+            buttonClasses="border rounded-end"
             showPlaceHolder
             options={tableList}
             darkMode={darkMode}
@@ -163,23 +322,13 @@ const JoinConstraint = ({ darkMode, index, onRemove, onChange, data }) => {
                 );
               }
 
-              if (result) {
-                const newData = cloneDeep({ ...data });
-                const { conditionsList = [] } = newData?.conditions || {};
-                const newConditionsList = conditionsList.map((condition) => {
-                  const newCondition = { ...condition };
-                  set(newCondition, 'rightField.table', value?.value);
-                  set(newCondition, 'operator', '='); //should we removed when we have more options
-                  return newCondition;
-                });
-                set(newData, 'conditions.conditionsList', newConditionsList);
-                set(newData, 'table', value?.value);
-                onChange(newData);
-              }
+              if (result) autoFillColumnIfForeignKeyExists(value?.value, false);
             }}
             onAdd={() => navigate(getPrivateRoute('database'))}
             addBtnLabel={'Add new table'}
             value={tableList.find((val) => val?.value === rightFieldTable)}
+            shouldShowForeignKeyIcon
+            referencedForeignKeyDetails={foreignKeyDetails}
           />
         </Col>
       </Row>
@@ -193,7 +342,7 @@ const JoinConstraint = ({ darkMode, index, onRemove, onChange, data }) => {
           index={index}
           groupOperator={operator}
           onOperatorChange={(value) => {
-            const newData = cloneDeep(data);
+            const newData = deepClone(data);
             set(newData, 'conditions.operator', value);
             onChange(newData);
           }}
@@ -204,19 +353,19 @@ const JoinConstraint = ({ darkMode, index, onRemove, onChange, data }) => {
               }
               return con;
             });
-            const newData = cloneDeep(data);
+            const newData = deepClone(data);
             set(newData, 'conditions.conditionsList', newConditionsList);
             onChange(newData);
           }}
           onRemove={() => {
             const newConditionsList = conditionsList.filter((_cond, i) => i !== index);
-            const newData = cloneDeep(data);
+            const newData = deepClone(data);
             set(newData, 'conditions.conditionsList', newConditionsList);
             onChange(newData);
           }}
         />
       ))}
-      <Row className="mb-2 mx-0">
+      <Row className="mb-2 mx-1">
         <Col className="p-0">
           <ButtonSolid
             variant="ghostBlue"
@@ -282,10 +431,10 @@ const JoinOn = ({
   ];
 
   return (
-    <Row className="border rounded mb-2 mx-0">
+    <Row className="mb-2 mx-0">
       <Col
         sm="2"
-        className="p-0 border-end"
+        className="p-0"
         // data-tooltip-id={`tdb-join-operator-tooltip-${index}`}
         // data-tooltip-content={
         //   index > 1
@@ -295,6 +444,7 @@ const JoinOn = ({
       >
         {index == 1 && (
           <DropDownSelect
+            buttonClasses="border border-end-0 rounded-start"
             showPlaceHolder
             options={groupOperators}
             darkMode={darkMode}
@@ -304,22 +454,40 @@ const JoinOn = ({
             }}
           />
         )}
-        {index == 0 && <div className="tj-small-btn px-2">On</div>}
+        {index == 0 && (
+          <div
+            style={{
+              height: '30px',
+              borderRadius: 0,
+            }}
+            className="tj-small-btn px-2 border border-end-0 rounded-start"
+          >
+            On
+          </div>
+        )}
         {index > 1 && (
-          <div className="tj-small-btn px-2" style={{ color: 'var(--slate9)' }}>
+          <div
+            style={{
+              height: '30px',
+              borderRadius: 0,
+              color: 'var(--slate9)',
+            }}
+            className="tj-small-btn px-2 border border-end-0 rounded-start"
+          >
             {groupOperator}
           </div>
         )}
       </Col>
-      <Col sm="4" className="p-0 border-end">
+      <Col sm="4" className="p-0">
         <DropDownSelect
+          buttonClasses="border border-end-0"
           showPlaceHolder
           options={leftFieldOptions}
           darkMode={darkMode}
           emptyError={
             <div className="dd-select-alert-error m-2 d-flex align-items-center">
               <Information />
-              No table selected
+              No data found
             </div>
           }
           value={leftFieldOptions.find((opt) => opt.value === leftFieldColumn)}
@@ -337,7 +505,7 @@ const JoinOn = ({
           }}
         />
       </Col>
-      <Col sm="1" className="p-0 border-end">
+      <Col sm="1" className="p-0">
         {/* <DropDownSelect
           options={operators}
           darkMode={darkMode}
@@ -349,17 +517,20 @@ const JoinOn = ({
 
         {/* Above line is commented and value is hardcoded as below */}
 
-        <div className="tj-small-btn px-2 text-center">{operator}</div>
+        <div style={{ height: '30px', borderRadius: 0 }} className="tj-small-btn px-2 text-center border border-end-0">
+          {operator}
+        </div>
       </Col>
       <Col sm="5" className="p-0 d-flex">
         <div className="flex-grow-1">
           <DropDownSelect
+            buttonClasses={`border ${index === 0 && 'rounded-end'}`}
             showPlaceHolder
             options={rightFieldOptions}
             emptyError={
               <div className="dd-select-alert-error m-2 d-flex align-items-center">
                 <Information />
-                {rightFieldTable ? 'No columns of the same data type' : 'No table selected'}
+                {rightFieldTable ? 'No columns of the same data type' : 'No data found'}
               </div>
             }
             darkMode={darkMode}
@@ -379,7 +550,13 @@ const JoinOn = ({
           />
         </div>
         {index > 0 && (
-          <ButtonSolid size="sm" variant="ghostBlack" className="px-1 rounded-0 border-start" onClick={onRemove}>
+          <ButtonSolid
+            customStyles={{ height: '30px' }}
+            size="sm"
+            variant="ghostBlack"
+            className="px-1 rounded-0 border border-start-0 rounded-end"
+            onClick={onRemove}
+          >
             <Trash fill="var(--slate9)" style={{ height: '16px' }} />
           </ButtonSolid>
         )}

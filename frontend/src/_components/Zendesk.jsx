@@ -3,9 +3,20 @@ import { toast } from 'react-hot-toast';
 import Input from '@/_ui/Input';
 import Radio from '@/_ui/Radio';
 import Button from '@/_ui/Button';
+import EncryptedFieldWrapper from './EncyrptedFieldWrapper';
+import { retrieveWhiteLabelText } from '@white-label/whiteLabelling';
 
-const Zendesk = ({ optionchanged, createDataSource, options, isSaving, selectedDataSource, workspaceConstants }) => {
+const Zendesk = ({
+  optionchanged,
+  createDataSource,
+  options,
+  isSaving,
+  selectedDataSource,
+  workspaceConstants,
+  optionsChanged,
+}) => {
   const [authStatus, setAuthStatus] = useState(null);
+  const whiteLabelText = retrieveWhiteLabelText();
 
   function authZendesk() {
     const provider = 'zendesk';
@@ -60,27 +71,29 @@ const Zendesk = ({ optionchanged, createDataSource, options, isSaving, selectedD
           />
         </div>
         <div className="col-md-12 mb-2">
-          <label className="form-label text-muted mt-3">
-            Client Secret
-            <small className="text-green mx-2">
-              <img className="mx-2 encrypted-icon" src="assets/images/icons/padlock.svg" width="12" height="12" />
-              Encrypted
-            </small>
-          </label>
-          <Input
-            type="password"
-            className="form-control"
-            onChange={(e) => optionchanged('client_secret', e.target.value)}
-            value={options?.client_secret?.value}
-            workspaceConstants={workspaceConstants}
-          />
+          <EncryptedFieldWrapper
+            options={options}
+            selectedDataSource={selectedDataSource}
+            optionchanged={optionchanged}
+            optionsChanged={optionsChanged}
+            name="client_secret"
+            label="Client Secret"
+          >
+            <Input
+              type="password"
+              className="form-control"
+              onChange={(e) => optionchanged('client_secret', e.target.value)}
+              value={options?.client_secret?.value}
+              workspaceConstants={workspaceConstants}
+            />
+          </EncryptedFieldWrapper>
         </div>
 
         <div className="col-md-12">
           <div className="mb-3">
             <div className="form-label">Scope(s)</div>
             <p>
-              If you want your ToolJet apps to modify your Zendesk resources, make sure to select read and write access
+              {`If you want your ${whiteLabelText} apps to modify your Zendesk resources, make sure to select read and write access`}
             </p>
             <div>
               <Radio
@@ -88,14 +101,14 @@ const Zendesk = ({ optionchanged, createDataSource, options, isSaving, selectedD
                 disabled={authStatus === 'waiting_for_token'}
                 onClick={() => optionchanged('access_type', 'read')}
                 text="Read only"
-                helpText="Your ToolJet apps can only read data from resources"
+                helpText={`Your ${whiteLabelText} apps can only read data from resources`}
               />
               <Radio
                 checked={options?.access_type?.value === 'write'}
                 disabled={authStatus === 'waiting_for_token'}
                 onClick={() => optionchanged('access_type', 'write')}
                 text="Read and write"
-                helpText="Your ToolJet apps can read data from resources, modify resources, and more."
+                helpText={`Your ${whiteLabelText} apps can read data from resources, modify resources, and more.`}
               />
             </div>
           </div>

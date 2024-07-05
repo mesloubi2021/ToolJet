@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import { copilotService } from '@/_services/copilot.service';
 import { toast } from 'react-hot-toast';
+import { deepClone } from '@/_helpers/utilities/utils.helpers';
 
 export async function getRecommendation(currentContext, query, lang = 'javascript') {
   const words = query.split(' ');
@@ -65,13 +66,13 @@ function getResult(suggestionList, query) {
   return suggestions;
 }
 
-export function getSuggestionKeys(refState, refSource) {
-  const state = _.cloneDeep(refState);
+export function getSuggestionKeys(refState) {
+  const state = deepClone(refState);
   const queries = state['queries'];
-
   const actions = [
     'runQuery',
     'setVariable',
+    'getVariable',
     'unSetVariable',
     'showAlert',
     'logout',
@@ -82,6 +83,7 @@ export function getSuggestionKeys(refState, refSource) {
     'goToApp',
     'generateFile',
     'setPageVariable',
+    'getPageVariable',
     'unsetPageVariable',
     'switchPage',
   ];
@@ -134,12 +136,26 @@ export function getSuggestionKeys(refState, refSource) {
     return suggestionList.push(key);
   });
 
-  if (['Runjs', 'Runpy'].includes(refSource)) {
-    actions.forEach((action) => {
-      suggestionList.push(`actions.${action}()`);
-    });
-  }
+  // if (['Runjs', 'Runpy'].includes(refSource)) {
+  //   actions.forEach((action) => {
+  //     suggestionList.push(`actions.${action}()`);
+  //   });
+  // }
 
+  actions.forEach((action) => {
+    suggestionList.push(`actions.${action}()`);
+  });
+
+  return suggestionList;
+}
+
+export function attachCustomResolvables(resolvables) {
+  const suggestionList = [];
+  for (const key in resolvables) {
+    for (const innerKey in resolvables[key]) {
+      suggestionList.push(`${key}.${innerKey}`);
+    }
+  }
   return suggestionList;
 }
 
@@ -239,8 +255,17 @@ export function canShowHint(editor, ignoreBraces = false) {
   return value.slice(ch, ch + 2) === '}}' || value.slice(ch, ch + 2) === '%%';
 }
 
-export function handleChange(editor, onChange, ignoreBraces = false, currentState, editorSource = undefined) {
+export function handleChange(
+  editor,
+  onChange,
+  ignoreBraces = false,
+  currentState,
+  editorSource = undefined,
+  resolvables = {}
+) {
   const suggestions = getSuggestionKeys(currentState, editorSource);
+  const resolvedSuggstions = attachCustomResolvables(resolvables); //attach custom resolved values to suggetsion list
+  suggestions.push(...resolvedSuggstions);
   let state = editor.state.matchHighlighter;
   editor.addOverlay((state.overlay = makeOverlay(state.options.style)));
 

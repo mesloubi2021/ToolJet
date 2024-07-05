@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal, Container, Row, Col } from 'react-bootstrap';
 import Categories from './Categories';
 import AppList from './AppList';
@@ -25,6 +25,7 @@ export default function TemplateLibraryModal(props) {
     (app) => selectedCategory.id === 'all' || app.category === selectedCategory.id
   );
   const [selectedApp, selectApp] = useState(undefined);
+  const [showCreateAppFromTemplateModal, setShowCreateAppFromTemplateModal] = useState(false);
   const { t } = useTranslation();
 
   useEffect(() => {
@@ -51,37 +52,18 @@ export default function TemplateLibraryModal(props) {
 
   const [deploying, setDeploying] = useState(false);
 
-  function deployApp(event) {
-    event.preventDefault();
-    const id = selectedApp.id;
-    setDeploying(true);
-    libraryAppService
-      .deploy(id)
-      .then((data) => {
-        setDeploying(false);
-        props.onCloseButtonClick();
-        toast.success('App created.', {
-          position: 'top-center',
-        });
-        navigate(`/${getWorkspaceId()}/apps/${data.id}`);
-      })
-      .catch((e) => {
-        toast.error(e.error, {
-          position: 'top-center',
-        });
-        setDeploying(false);
-      });
-  }
-
   return (
     <Modal
-      {...props}
+      show={props.show}
+      onHide={props.onCloseButtonClick}
       className={`template-library-modal ${props.darkMode ? 'dark-mode dark-theme' : ''}`}
       aria-labelledby="contained-modal-title-vcenter"
       centered
     >
       <Modal.Header>
-        <Modal.Title>{t('homePage.templateLibraryModal.select', 'Select template')}</Modal.Title>
+        <Modal.Title data-cy="select-template-header">
+          {t('homePage.templateLibraryModal.select', 'Select template')}
+        </Modal.Title>
       </Modal.Header>
       <Modal.Body>
         <Container fluid>
@@ -110,15 +92,19 @@ export default function TemplateLibraryModal(props) {
                     style={{ borderTop: '1px solid #D2DDEC', zIndex: 1 }}
                   >
                     <div className="d-flex flex-row align-items-center" style={{ height: '100%' }}>
-                      <ButtonSolid variant="tertiary" onClick={props.onCloseButtonClick}>
+                      <ButtonSolid variant="tertiary" onClick={props.onCloseButtonClick} data-cy="cancel-button">
                         {t('globals.cancel', 'Cancel')}
                       </ButtonSolid>
                       <ButtonSolid
-                        onClick={(e) => {
-                          deployApp(e);
+                        onClick={() => {
+                          props.openCreateAppFromTemplateModal(selectedApp);
+                          setShowCreateAppFromTemplateModal(false);
+                          props.onCloseButtonClick();
                         }}
                         isLoading={deploying}
-                        className=" ms-2 "
+                        className="ms-2"
+                        disabled={props.appCreationDisabled}
+                        data-cy="create-application-from-template-button"
                       >
                         {t('homePage.templateLibraryModal.createAppfromTemplate', 'Create application from template')}
                       </ButtonSolid>

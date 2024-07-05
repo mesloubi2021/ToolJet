@@ -1,7 +1,7 @@
-import { BadRequestException, Injectable, NotAcceptableException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotAcceptableException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { App } from 'src/entities/app.entity';
-import { EntityManager, MoreThan, Repository } from 'typeorm';
+import { EntityManager, Like, MoreThan, Repository } from 'typeorm';
 import { User } from 'src/entities/user.entity';
 import { AppUser } from 'src/entities/app_user.entity';
 import { AppVersion } from 'src/entities/app_version.entity';
@@ -12,13 +12,7 @@ import { AppGroupPermission } from 'src/entities/app_group_permission.entity';
 import { AppImportExportService } from './app_import_export.service';
 import { DataSourcesService } from './data_sources.service';
 import { Credential } from 'src/entities/credential.entity';
-import {
-  catchDbException,
-  cleanObject,
-  dbTransactionWrap,
-  defaultAppEnvironments,
-  generateNextName,
-} from 'src/helpers/utils.helper';
+import { catchDbException, cleanObject, dbTransactionWrap, defaultAppEnvironments } from 'src/helpers/utils.helper';
 import { AppUpdateDto } from '@dto/app-update.dto';
 import { viewableAppsQuery } from 'src/helpers/queries';
 import { VersionEditDto } from '@dto/version-edit.dto';
@@ -28,6 +22,24 @@ import { AppEnvironmentService } from './app_environments.service';
 import { decode } from 'js-base64';
 import { DataSourceScopes } from 'src/helpers/data_source.constants';
 import { DataBaseConstraints } from 'src/helpers/db_constraints.constants';
+import { Page } from 'src/entities/page.entity';
+import { AppVersionUpdateDto } from '@dto/app-version-update.dto';
+import { Layout } from 'src/entities/layout.entity';
+import { Component } from 'src/entities/component.entity';
+import { EventHandler } from 'src/entities/event_handler.entity';
+import { VersionReleaseDto } from '@dto/version-release.dto';
+
+import { findAllEntityReferences, isValidUUID, updateEntityReferences } from 'src/helpers/import_export.helpers';
+import { isEmpty } from 'lodash';
+import { AppBase } from 'src/entities/app_base.entity';
+import { LayoutDimensionUnits } from 'src/helpers/components.helper';
+
+const uuid = require('uuid');
+
+interface AppResourceMappings {
+  dataQueryMapping: Record<string, string>;
+  componentsMapping: Record<string, string>;
+}
 
 @Injectable()
 export class AppsService {
@@ -92,6 +104,12 @@ export class AppsService {
     ).app;
   }
 
+  async findVersionFromName(name: string, appId: string): Promise<AppVersion> {
+    return await this.appVersionsRepository.findOne({
+      where: { name, appId },
+    });
+  }
+
   async findDataQueriesForVersion(appVersionId: string): Promise<DataQuery[]> {
     return await dbTransactionWrap(async (manager: EntityManager) => {
       return manager
@@ -103,35 +121,61 @@ export class AppsService {
     });
   }
 
-  async create(user: User, manager: EntityManager): Promise<App> {
+  async create(name: string, user: User, manager: EntityManager): Promise<App> {
     return await dbTransactionWrap(async (manager: EntityManager) => {
-      const name = await generateNextName('My app');
-      const app = await manager.save(
-        manager.create(App, {
-          name,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          organizationId: user.organizationId,
-          userId: user.id,
-        })
-      );
+      return await catchDbException(async () => {
+        const app = await manager.save(
+          manager.create(App, {
+            name,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            organizationId: user.organizationId,
+            userId: user.id,
+          })
+        );
 
-      //create default app version
-      await this.createVersion(user, app, 'v1', null, null, manager);
+        //create default app version
+        const appVersion = await this.createVersion(user, app, 'v1', null, null, manager);
 
-      await manager.save(
-        manager.create(AppUser, {
-          userId: user.id,
-          appId: app.id,
-          role: 'admin',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-      );
+        const defaultHomePage = await manager.save(
+          manager.create(Page, {
+            name: 'Home',
+            handle: 'home',
+            appVersionId: appVersion.id,
+            index: 1,
+            autoComputeLayout: true,
+          })
+        );
 
-      await this.createAppGroupPermissionsForAdmin(app, manager);
-      return app;
-    }, manager);
+        // Set default values for app version
+        appVersion.showViewerNavigation = true;
+        appVersion.homePageId = defaultHomePage.id;
+        appVersion.globalSettings = {
+          hideHeader: false,
+          appInMaintenance: false,
+          canvasMaxWidth: 100,
+          canvasMaxWidthType: '%',
+          canvasMaxHeight: 2400,
+          canvasBackgroundColor: '#edeff5',
+          backgroundFxQuery: '',
+          appMode: 'auto',
+        };
+        await manager.save(appVersion);
+
+        await manager.save(
+          manager.create(AppUser, {
+            userId: user.id,
+            appId: app.id,
+            role: 'admin',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          })
+        );
+
+        await this.createAppGroupPermissionsForAdmin(app, manager);
+        return app;
+      }, [{ dbConstraint: DataBaseConstraints.APP_NAME_UNIQUE, message: 'This app name is already taken.' }]);
+    });
   }
 
   async createAppGroupPermissionsForAdmin(app: App, manager: EntityManager): Promise<void> {
@@ -170,9 +214,9 @@ export class AppsService {
     }
   }
 
-  async clone(existingApp: App, user: User): Promise<App> {
+  async clone(existingApp: App, user: User, appName: string): Promise<App> {
     const appWithRelations = await this.appImportExportService.export(user, existingApp.id);
-    const clonedApp = await this.appImportExportService.import(user, appWithRelations);
+    const clonedApp = await this.appImportExportService.import(user, appWithRelations, appName);
 
     return clonedApp;
   }
@@ -187,7 +231,7 @@ export class AppsService {
     });
   };
 
-  async all(user: User, page: number, searchKey: string): Promise<App[]> {
+  async all(user: User, page: number, searchKey: string): Promise<AppBase[]> {
     const viewableAppsQb = viewableAppsQuery(user, searchKey);
 
     if (page) {
@@ -198,6 +242,12 @@ export class AppsService {
     }
 
     return await viewableAppsQb.getMany();
+  }
+
+  async findAll(organizationId: string, searchParam): Promise<App[]> {
+    return await this.appsRepository.find({
+      where: { organizationId, ...(searchParam.name && { name: Like(`${searchParam.name} %`) }) },
+    });
   }
 
   async update(appId: string, appUpdateDto: AppUpdateDto, manager?: EntityManager) {
@@ -237,13 +287,12 @@ export class AppsService {
           throw new BadRequestException('You can only release when the version is promoted to production');
         }
       }
-      return await catchDbException(
-        async () => {
-          return await manager.update(App, appId, updatableParams);
-        },
-        DataBaseConstraints.APP_NAME_UNIQUE,
-        'This app name is already taken.'
-      );
+      return await catchDbException(async () => {
+        return await manager.update(App, appId, updatableParams);
+      }, [
+        { dbConstraint: DataBaseConstraints.APP_NAME_UNIQUE, message: 'This app name is already taken.' },
+        { dbConstraint: DataBaseConstraints.APP_SLUG_UNIQUE, message: 'This app slug is already taken.' },
+      ]);
     }, manager);
   }
 
@@ -345,9 +394,315 @@ export class AppsService {
         })
       );
 
-      await this.createNewDataSourcesAndQueriesForVersion(manager, appVersion, versionFrom, organizationId);
+      if (versionFrom) {
+        (appVersion.showViewerNavigation = versionFrom.showViewerNavigation),
+          (appVersion.globalSettings = versionFrom.globalSettings),
+          await manager.save(appVersion);
+
+        const oldDataQueryToNewMapping = await this.createNewDataSourcesAndQueriesForVersion(
+          manager,
+          appVersion,
+          versionFrom,
+          organizationId
+        );
+
+        const { oldComponentToNewComponentMapping, oldPageToNewPageMapping } =
+          await this.createNewPagesAndComponentsForVersion(manager, appVersion, versionFrom.id, versionFrom.homePageId);
+
+        await this.updateEntityReferencesForNewVersion(manager, {
+          componentsMapping: oldComponentToNewComponentMapping,
+          dataQueryMapping: oldDataQueryToNewMapping,
+        });
+
+        await this.updateEventActionsForNewVersionWithNewMappingIds(
+          manager,
+          appVersion.id,
+          oldDataQueryToNewMapping,
+          oldComponentToNewComponentMapping,
+          oldPageToNewPageMapping
+        );
+      }
+
       return appVersion;
     }, manager);
+  }
+
+  async updateEntityReferencesForNewVersion(manager: EntityManager, resourceMapping: AppResourceMappings) {
+    const mappings = { ...resourceMapping.componentsMapping, ...resourceMapping.dataQueryMapping };
+    const newComponentIds = Object.values(resourceMapping.componentsMapping);
+    const newQueriesIds = Object.values(resourceMapping.dataQueryMapping);
+
+    if (newComponentIds.length > 0) {
+      const components = await manager
+        .createQueryBuilder(Component, 'components')
+        .where('components.id IN(:...componentIds)', { componentIds: newComponentIds })
+        .select([
+          'components.id',
+          'components.properties',
+          'components.styles',
+          'components.general',
+          'components.validation',
+          'components.generalStyles',
+          'components.displayPreferences',
+        ])
+        .getMany();
+
+      const toUpdateComponents = components.filter((component) => {
+        const entityReferencesInComponentDefinitions = findAllEntityReferences(component, []).filter(
+          (entity) => entity && isValidUUID(entity)
+        );
+
+        if (entityReferencesInComponentDefinitions.length > 0) {
+          return updateEntityReferences(component, mappings);
+        }
+      });
+
+      if (!isEmpty(toUpdateComponents)) {
+        await manager.save(toUpdateComponents);
+      }
+    }
+
+    if (newQueriesIds.length > 0) {
+      const dataQueries = await manager
+        .createQueryBuilder(DataQuery, 'dataQueries')
+        .where('dataQueries.id IN(:...dataQueryIds)', { dataQueryIds: newQueriesIds })
+        .select(['dataQueries.id', 'dataQueries.options'])
+        .getMany();
+
+      const toUpdateDataQueries = dataQueries.filter((dataQuery) => {
+        const entityReferencesInQueryOptions = findAllEntityReferences(dataQuery, []).filter(
+          (entity) => entity && isValidUUID(entity)
+        );
+
+        if (entityReferencesInQueryOptions.length > 0) {
+          return updateEntityReferences(dataQuery, mappings);
+        }
+      });
+
+      if (!isEmpty(toUpdateDataQueries)) {
+        await manager.save(toUpdateDataQueries);
+      }
+    }
+  }
+
+  async updateEventActionsForNewVersionWithNewMappingIds(
+    manager: EntityManager,
+    versionId: string,
+    oldDataQueryToNewMapping: Record<string, unknown>,
+    oldComponentToNewComponentMapping: Record<string, unknown>,
+    oldPageToNewPageMapping: Record<string, unknown>
+  ) {
+    const allEvents = await manager.find(EventHandler, {
+      where: { appVersionId: versionId },
+    });
+
+    const mappings = { ...oldDataQueryToNewMapping, ...oldComponentToNewComponentMapping } as Record<string, string>;
+
+    for (const event of allEvents) {
+      const eventDefinition = updateEntityReferences(event.event, mappings);
+
+      if (eventDefinition?.actionId === 'run-query') {
+        eventDefinition.queryId = oldDataQueryToNewMapping[eventDefinition.queryId];
+      }
+
+      if (eventDefinition?.actionId === 'control-component') {
+        eventDefinition.componentId = oldComponentToNewComponentMapping[eventDefinition.componentId];
+      }
+
+      if (eventDefinition?.actionId === 'switch-page') {
+        eventDefinition.pageId = oldPageToNewPageMapping[eventDefinition.pageId];
+      }
+
+      if (eventDefinition?.actionId == 'show-modal' || eventDefinition?.actionId === 'close-modal') {
+        eventDefinition.modal = oldComponentToNewComponentMapping[eventDefinition.modal];
+      }
+
+      event.event = eventDefinition;
+
+      await manager.save(event);
+    }
+  }
+
+  async createNewPagesAndComponentsForVersion(
+    manager: EntityManager,
+    appVersion: AppVersion,
+    versionFromId: string,
+    prevHomePagePage: string
+  ) {
+    const pages = await manager
+      .createQueryBuilder(Page, 'page')
+      .leftJoinAndSelect('page.components', 'component')
+      .leftJoinAndSelect('component.layouts', 'layout')
+      .where('page.appVersionId = :appVersionId', { appVersionId: versionFromId })
+      .getMany();
+
+    const allEvents = await manager.find(EventHandler, {
+      where: { appVersionId: versionFromId },
+    });
+
+    let homePageId = prevHomePagePage;
+
+    const newComponents = [];
+    const newComponentLayouts = [];
+    const oldComponentToNewComponentMapping = {};
+    const oldPageToNewPageMapping = {};
+
+    const isChildOfTabsOrCalendar = (component, allComponents = [], componentParentId = undefined) => {
+      if (componentParentId) {
+        const parentId = component?.parent?.split('-').slice(0, -1).join('-');
+
+        const parentComponent = allComponents.find((comp) => comp.id === parentId);
+
+        if (parentComponent) {
+          return parentComponent.type === 'Tabs' || parentComponent.type === 'Calendar';
+        }
+      }
+
+      return false;
+    };
+
+    const isChildOfKanbanModal = (componentParentId: string, allComponents = []) => {
+      if (!componentParentId.includes('modal')) return false;
+
+      if (componentParentId) {
+        const parentId = componentParentId.split('-').slice(0, -1).join('-');
+        const isParentKandban = allComponents.find((comp) => comp.id === parentId)?.type === 'Kanban';
+
+        return isParentKandban;
+      }
+    };
+
+    for (const page of pages) {
+      const savedPage = await manager.save(
+        manager.create(Page, {
+          name: page.name,
+          handle: page.handle,
+          index: page.index,
+          disabled: page.disabled,
+          hidden: page.hidden,
+          appVersionId: appVersion.id,
+        })
+      );
+      oldPageToNewPageMapping[page.id] = savedPage.id;
+      if (page.id === prevHomePagePage) {
+        homePageId = savedPage.id;
+      }
+
+      const pageEvents = allEvents.filter((event) => event.sourceId === page.id);
+
+      pageEvents.forEach(async (event, index) => {
+        const newEvent = new EventHandler();
+
+        newEvent.id = uuid.v4();
+        newEvent.name = event.name;
+        newEvent.sourceId = savedPage.id;
+        newEvent.target = event.target;
+        newEvent.event = event.event;
+        newEvent.index = event.index ?? index;
+        newEvent.appVersionId = appVersion.id;
+
+        await manager.save(newEvent);
+      });
+
+      page.components.forEach(async (component) => {
+        const newComponent = new Component();
+        const componentEvents = allEvents.filter((event) => event.sourceId === component.id);
+
+        newComponent.id = uuid.v4();
+
+        oldComponentToNewComponentMapping[component.id] = newComponent.id;
+
+        let parentId = component.parent ? component.parent : null;
+
+        const isParentTabOrCalendar = isChildOfTabsOrCalendar(component, page.components, parentId);
+
+        if (isParentTabOrCalendar) {
+          const childTabId = component.parent.split('-')[component.parent.split('-').length - 1];
+          const _parentId = component?.parent?.split('-').slice(0, -1).join('-');
+          const mappedParentId = oldComponentToNewComponentMapping[_parentId];
+
+          parentId = `${mappedParentId}-${childTabId}`;
+        } else {
+          parentId = oldComponentToNewComponentMapping[parentId];
+        }
+
+        newComponent.name = component.name;
+        newComponent.type = component.type;
+        newComponent.pageId = savedPage.id;
+        newComponent.properties = component.properties;
+        newComponent.styles = component.styles;
+        newComponent.validation = component.validation;
+        newComponent.general = component.general;
+        newComponent.generalStyles = component.generalStyles;
+        newComponent.displayPreferences = component.displayPreferences;
+        newComponent.parent = component.parent;
+        newComponent.page = savedPage;
+
+        newComponents.push(newComponent);
+
+        component.layouts.forEach((layout) => {
+          const newLayout = new Layout();
+          newLayout.id = uuid.v4();
+          newLayout.type = layout.type;
+          newLayout.top = layout.top;
+          newLayout.left = layout.left;
+          newLayout.width = layout.width;
+          newLayout.height = layout.height;
+          newLayout.componentId = layout.componentId;
+          newLayout.dimensionUnit = LayoutDimensionUnits.COUNT;
+
+          newLayout.component = newComponent;
+
+          newComponentLayouts.push(newLayout);
+        });
+
+        componentEvents.forEach(async (event, index) => {
+          const newEvent = new EventHandler();
+
+          newEvent.id = uuid.v4();
+          newEvent.name = event.name;
+          newEvent.sourceId = newComponent.id;
+          newEvent.target = event.target;
+          newEvent.event = event.event;
+          newEvent.index = event.index ?? index;
+          newEvent.appVersionId = appVersion.id;
+
+          await manager.save(newEvent);
+        });
+      });
+
+      newComponents.forEach((component) => {
+        let parentId = component.parent ? component.parent : null;
+
+        if (!parentId) return;
+
+        const isParentTabOrCalendar = isChildOfTabsOrCalendar(component, page.components, parentId);
+
+        if (isParentTabOrCalendar) {
+          const childTabId = component?.parent?.split('-')[component?.parent?.split('-').length - 1];
+          const _parentId = component?.parent?.split('-').slice(0, -1).join('-');
+          const mappedParentId = oldComponentToNewComponentMapping[_parentId];
+
+          parentId = `${mappedParentId}-${childTabId}`;
+        } else if (isChildOfKanbanModal(component.parent, page.components)) {
+          const _parentId = component?.parent?.split('-').slice(0, -1).join('-');
+          const mappedParentId = oldComponentToNewComponentMapping[_parentId];
+
+          parentId = `${mappedParentId}-modal`;
+        } else {
+          parentId = oldComponentToNewComponentMapping[parentId];
+        }
+
+        component.parent = parentId;
+      });
+
+      await manager.save(newComponents);
+      await manager.save(newComponentLayouts);
+    }
+
+    await manager.update(AppVersion, { id: appVersion.id }, { homePageId });
+
+    return { oldComponentToNewComponentMapping, oldPageToNewPageMapping };
   }
 
   async deleteVersion(app: App, version: AppVersion): Promise<void> {
@@ -396,38 +751,61 @@ export class AppsService {
         .where('data_query.appVersionId = :appVersionId', { appVersionId: versionFrom?.id })
         .andWhere('dataSource.scope = :scope', { scope: DataSourceScopes.GLOBAL })
         .getMany();
-      const dataSources = versionFrom?.dataSources;
+      const dataSources = versionFrom?.dataSources.filter((ds) => ds.scope == DataSourceScopes.LOCAL); //Local data sources
+      const globalDataSources = [...new Map(globalQueries.map((gq) => [gq.dataSource.id, gq.dataSource])).values()];
+
       const dataSourceMapping = {};
       const newDataQueries = [];
+      const allEvents = await manager.find(EventHandler, {
+        where: { appVersionId: versionFrom?.id, target: 'data_query' },
+      });
 
-      if (dataSources?.length) {
-        for (const dataSource of dataSources) {
-          const dataSourceParams: Partial<DataSource> = {
-            name: dataSource.name,
-            kind: dataSource.kind,
-            type: dataSource.type,
-            appVersionId: appVersion.id,
-          };
-          const newDataSource = await manager.save(manager.create(DataSource, dataSourceParams));
-          dataSourceMapping[dataSource.id] = newDataSource.id;
-
-          const dataQueries = versionFrom?.dataSources?.find((ds) => ds.id === dataSource.id).dataQueries;
-
-          for (const dataQuery of dataQueries) {
-            const dataQueryParams = {
-              name: dataQuery.name,
-              options: dataQuery.options,
-              dataSourceId: newDataSource.id,
+      if (dataSources?.length > 0 || globalDataSources?.length > 0) {
+        if (dataSources?.length > 0) {
+          for (const dataSource of dataSources) {
+            const dataSourceParams: Partial<DataSource> = {
+              name: dataSource.name,
+              kind: dataSource.kind,
+              type: dataSource.type,
               appVersionId: appVersion.id,
             };
+            const newDataSource = await manager.save(manager.create(DataSource, dataSourceParams));
+            dataSourceMapping[dataSource.id] = newDataSource.id;
 
-            const newQuery = await manager.save(manager.create(DataQuery, dataQueryParams));
-            oldDataQueryToNewMapping[dataQuery.id] = newQuery.id;
-            newDataQueries.push(newQuery);
+            const dataQueries = versionFrom?.dataSources?.find((ds) => ds.id === dataSource.id).dataQueries;
+
+            for (const dataQuery of dataQueries) {
+              const dataQueryParams = {
+                name: dataQuery.name,
+                options: dataQuery.options,
+                dataSourceId: newDataSource.id,
+                appVersionId: appVersion.id,
+              };
+              const newQuery = await manager.save(manager.create(DataQuery, dataQueryParams));
+
+              const dataQueryEvents = allEvents.filter((event) => event.sourceId === dataQuery.id);
+
+              dataQueryEvents.forEach(async (event, index) => {
+                const newEvent = new EventHandler();
+
+                newEvent.id = uuid.v4();
+                newEvent.name = event.name;
+                newEvent.sourceId = newQuery.id;
+                newEvent.target = event.target;
+                newEvent.event = event.event;
+                newEvent.index = event.index ?? index;
+                newEvent.appVersionId = appVersion.id;
+
+                await manager.save(newEvent);
+              });
+
+              oldDataQueryToNewMapping[dataQuery.id] = newQuery.id;
+              newDataQueries.push(newQuery);
+            }
           }
         }
 
-        if (globalQueries?.length) {
+        if (globalQueries?.length > 0) {
           for (const globalQuery of globalQueries) {
             const dataQueryParams = {
               name: globalQuery.name,
@@ -437,6 +815,21 @@ export class AppsService {
             };
 
             const newQuery = await manager.save(manager.create(DataQuery, dataQueryParams));
+            const dataQueryEvents = allEvents.filter((event) => event.sourceId === globalQuery.id);
+
+            dataQueryEvents.forEach(async (event, index) => {
+              const newEvent = new EventHandler();
+
+              newEvent.id = uuid.v4();
+              newEvent.name = event.name;
+              newEvent.sourceId = newQuery.id;
+              newEvent.target = event.target;
+              newEvent.event = event.event;
+              newEvent.index = event.index ?? index;
+              newEvent.appVersionId = appVersion.id;
+
+              await manager.save(newEvent);
+            });
             oldDataQueryToNewMapping[globalQuery.id] = newQuery.id;
             newDataQueries.push(newQuery);
           }
@@ -448,6 +841,7 @@ export class AppsService {
             oldDataQueryToNewMapping
           );
           newQuery.options = newOptions;
+
           await manager.save(newQuery);
         }
 
@@ -478,6 +872,8 @@ export class AppsService {
         }
       }
     }
+
+    return oldDataQueryToNewMapping;
   }
 
   private async createEnvironments(appEnvironments: any[], manager: EntityManager, organizationId: string) {
@@ -643,6 +1039,31 @@ export class AppsService {
     return await this.appVersionsRepository.update(version.id, editableParams);
   }
 
+  async updateAppVersion(version: AppVersion, body: AppVersionUpdateDto) {
+    const editableParams = {};
+
+    const { globalSettings, homePageId } = await this.appVersionsRepository.findOne({
+      where: { id: version.id },
+    });
+
+    if (body?.homePageId && homePageId !== body.homePageId) {
+      editableParams['homePageId'] = body.homePageId;
+    }
+
+    if (body?.globalSettings) {
+      editableParams['globalSettings'] = {
+        ...globalSettings,
+        ...body.globalSettings,
+      };
+    }
+
+    if (typeof body?.showViewerNavigation === 'boolean') {
+      editableParams['showViewerNavigation'] = body.showViewerNavigation;
+    }
+
+    return await this.appVersionsRepository.update(version.id, editableParams);
+  }
+
   convertToArrayOfKeyValuePairs(options): Array<object> {
     if (!options) return;
     return Object.keys(options).map((key) => {
@@ -655,6 +1076,22 @@ export class AppsService {
     });
   }
 
+  async findAppWithIdOrSlug(slug: string): Promise<App> {
+    let app: App;
+    try {
+      app = await this.find(slug);
+    } catch (error) {
+      /* means: UUID error. so the slug isn't not the id of the app */
+      if (error?.code === `22P02`) {
+        /* Search against slug */
+        app = await this.findBySlug(slug);
+      }
+    }
+
+    if (!app) throw new NotFoundException('App not found. Invalid app id');
+    return app;
+  }
+
   async findTooljetDbTables(appId: string): Promise<{ table_id: string }[]> {
     return await dbTransactionWrap(async (manager: EntityManager) => {
       const tooljetDbDataQueries = await manager
@@ -665,11 +1102,51 @@ export class AppsService {
         .andWhere('data_sources.kind = :kind', { kind: 'tooljetdb' })
         .getMany();
 
-      const uniqTableIds = [...new Set(tooljetDbDataQueries.map((dq) => dq.options['table_id']))];
+      const uniqTableIds = new Set();
+      tooljetDbDataQueries.forEach((dq) => {
+        if (dq.options?.operation === 'join_tables') {
+          const joinOptions = dq.options?.join_table?.joins ?? [];
+          (joinOptions || []).forEach((join) => {
+            const { table, conditions } = join;
+            if (table) uniqTableIds.add(table);
+            conditions?.conditionsList?.forEach((condition) => {
+              const { leftField, rightField } = condition;
+              if (leftField?.table) {
+                uniqTableIds.add(leftField?.table);
+              }
+              if (rightField?.table) {
+                uniqTableIds.add(rightField?.table);
+              }
+            });
+          });
+        }
+        if (dq.options.table_id) uniqTableIds.add(dq.options.table_id);
+      });
 
-      return uniqTableIds.map((table_id) => {
+      return [...uniqTableIds].map((table_id) => {
         return { table_id };
       });
     });
+  }
+
+  async releaseVersion(appId: string, versionReleaseDto: VersionReleaseDto, manager?: EntityManager) {
+    return await dbTransactionWrap(async (manager: EntityManager) => {
+      const { versionToBeReleased } = versionReleaseDto;
+      //check if the app version is eligible for release
+      const currentEnvironment: AppEnvironment = await manager
+        .createQueryBuilder(AppEnvironment, 'app_environments')
+        .select(['app_environments.id', 'app_environments.isDefault'])
+        .innerJoinAndSelect('app_versions', 'app_versions', 'app_versions.current_environment_id = app_environments.id')
+        .where('app_versions.id = :versionToBeReleased', {
+          versionToBeReleased,
+        })
+        .getOne();
+
+      if (!currentEnvironment?.isDefault) {
+        throw new BadRequestException('You can only release when the version is promoted to production');
+      }
+
+      return await manager.update(App, appId, { currentVersionId: versionToBeReleased });
+    }, manager);
   }
 }

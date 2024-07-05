@@ -3,6 +3,7 @@ import { default as BootstrapModal } from 'react-bootstrap/Modal';
 import { SubCustomDragLayer } from '../SubCustomDragLayer';
 import { SubContainer } from '../SubContainer';
 import { ConfigHandle } from '../ConfigHandle';
+import { useGridStore } from '@/_stores/gridStore';
 var tinycolor = require('tinycolor2');
 
 export const Modal = function Modal({
@@ -14,9 +15,11 @@ export const Modal = function Modal({
   styles,
   exposedVariables,
   setExposedVariable,
+  setExposedVariables,
   fireEvent,
   dataCy,
   height,
+  mode,
 }) {
   const [showModal, setShowModal] = useState(false);
 
@@ -41,28 +44,61 @@ export const Modal = function Modal({
     boxShadow,
   } = styles;
   const parentRef = useRef(null);
+  const controlBoxRef = useRef(null);
+  const isInitialRender = useRef(true);
 
   const title = properties.title ?? '';
   const size = properties.size ?? 'lg';
 
+  /**** Start - Logic to reset the zIndex of modal control box ****/
   useEffect(() => {
-    setExposedVariable('open', async function () {
-      setExposedVariable('show', true);
-      setShowModal(true);
-    });
-    setExposedVariable('close', async function () {
-      setShowModal(false);
-      setExposedVariable('show', false);
-    });
+    if (!showModal && mode === 'edit') {
+      controlBoxRef.current?.classList?.remove('modal-moveable');
+      controlBoxRef.current = null;
+    }
+    if (showModal) {
+      useGridStore.getState().actions.setOpenModalWidgetId(id);
+    } else {
+      if (useGridStore.getState().openModalWidgetId === id) {
+        useGridStore.getState().actions.setOpenModalWidgetId(null);
+      }
+    }
+  }, [showModal]);
+  /**** End - Logic to reset the zIndex of modal control box ****/
+
+  useEffect(() => {
+    const exposedVariables = {
+      open: async function () {
+        setExposedVariable('show', true);
+        setShowModal(true);
+      },
+      close: async function () {
+        setShowModal(false);
+        setExposedVariable('show', false);
+      },
+    };
+    setExposedVariables(exposedVariables);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setShowModal]);
 
   useEffect(() => {
+    if (isInitialRender.current) {
+      isInitialRender.current = false;
+      return;
+    }
     const canShowModal = exposedVariables.show ?? false;
+    fireEvent(!canShowModal && 'onClose');
     setShowModal(exposedVariables.show ?? false);
-    fireEvent(canShowModal ? 'onOpen' : 'onClose');
+    const inputRef = document?.getElementsByClassName('tj-text-input-widget')?.[0];
+    inputRef?.blur();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exposedVariables.show]);
+
+  function hideModal() {
+    setShowModal(false);
+    setExposedVariable('show', false);
+    fireEvent('onClose');
+  }
 
   useEffect(() => {
     const handleModalOpen = () => {
@@ -121,11 +157,6 @@ export const Modal = function Modal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showModal, modalHeight]);
 
-  function hideModal() {
-    setShowModal(false);
-    setExposedVariable('show', false);
-    fireEvent('onClose');
-  }
   const backwardCompatibilityCheck = height == '34' || modalHeight != undefined ? true : false;
 
   const customStyles = {
@@ -154,7 +185,7 @@ export const Modal = function Modal({
   useEffect(() => {
     if (closeOnClickingOutside) {
       const handleClickOutside = (event) => {
-        const modalRef = parentRef.current.parentElement.parentElement.parentElement;
+        const modalRef = parentRef?.current?.parentElement?.parentElement?.parentElement;
 
         if (modalRef && modalRef === event.target) {
           hideModal();
@@ -170,16 +201,29 @@ export const Modal = function Modal({
   }, [closeOnClickingOutside, parentRef]);
 
   return (
-    <div className="container" data-disabled={disabledState} data-cy={dataCy}>
+    <div
+      className="container d-flex align-items-center"
+      data-disabled={disabledState}
+      data-cy={dataCy}
+      style={{ height }}
+    >
       {useDefaultButton && (
         <button
           disabled={disabledState}
           className="jet-button btn btn-primary p-1 overflow-hidden"
           style={customStyles.buttonStyles}
           onClick={(event) => {
+            /**** Start - Logic to reduce the zIndex of modal control box ****/
+            controlBoxRef.current = document.querySelector(`.selected-component.sc-${id}`)?.parentElement;
+            if (mode === 'edit' && controlBoxRef.current) {
+              controlBoxRef.current.classList.add('modal-moveable');
+            }
+            /**** End - Logic to reduce the zIndex of modal control box ****/
+
             event.stopPropagation();
             setShowModal(true);
             setExposedVariable('show', true);
+            fireEvent('onOpen');
           }}
           data-cy={`${dataCy}-launch-button`}
         >

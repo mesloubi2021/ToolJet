@@ -1,48 +1,88 @@
 import React, { useState, useEffect } from 'react';
 import { default as BootstrapModal } from 'react-bootstrap/Modal';
 import moment from 'moment';
-import { appService } from '@/_services/app.service';
+import { appsService } from '@/_services';
 import { toast } from 'react-hot-toast';
 import { ButtonSolid } from '@/_components/AppButton';
 
 export default function ExportAppModal({ title, show, closeModal, customClassName, app, darkMode }) {
-  const currentVersion = app?.editing_version;
   const [versions, setVersions] = useState(undefined);
   const [tables, setTables] = useState(undefined);
-  const [versionId, setVersionId] = useState(currentVersion?.id);
+  const [allTables, setAllTables] = useState(undefined);
+  const [versionId, setVersionId] = useState(undefined);
   const [exportTjDb, setExportTjDb] = useState(true);
+  const [currentVersion, setCurrentVersion] = useState(undefined);
+  const [versionSelectLoading, setVersionSelectLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     async function fetchAppVersions() {
+      setLoading(true);
       try {
-        const fetchVersions = await appService.getVersions(app.id);
+        const fetchVersions = await appsService.getVersions(app.id);
+        const fetchTables = await appsService.getTables(app.id); // this is used to get all tables
         const { versions } = fetchVersions;
+        const { tables } = fetchTables;
         setVersions(versions);
+        setAllTables(tables);
+        const currentEditingVersion = versions?.filter((version) => version?.isCurrentEditingVersion)[0];
+        if (currentEditingVersion) {
+          setCurrentVersion(currentEditingVersion);
+          setVersionId(currentEditingVersion?.id);
+        }
       } catch (error) {
         toast.error('Could not fetch the versions.', {
           position: 'top-center',
         });
         closeModal();
       }
+      setLoading(false);
     }
+    fetchAppVersions();
+  }, [app, closeModal]);
+
+  useEffect(() => {
     async function fetchAppTables() {
+      setVersionSelectLoading(true);
       try {
-        const fetchTables = await appService.getTables(app.id);
-        const { tables } = fetchTables;
-        setTables(tables);
+        if (!versionId) return;
+        const tbl = await appsService.getAppByVersion(app.id, versionId); // this is used to get particular App by version
+        const { dataQueries } = tbl;
+        const extractedIdData = [];
+        dataQueries.forEach((item) => {
+          if (item.kind === 'tooljetdb') {
+            const joinOptions = item.options?.join_table?.joins ?? [];
+            (joinOptions || []).forEach((join) => {
+              const { table, conditions } = join;
+              if (table) extractedIdData.push(table);
+              conditions?.conditionsList?.forEach((condition) => {
+                const { leftField, rightField } = condition;
+                if (leftField?.table) {
+                  extractedIdData.push(leftField?.table);
+                }
+                if (rightField?.table) {
+                  extractedIdData.push(rightField?.table);
+                }
+              });
+            });
+          }
+        });
+        const uniqueSet = new Set(extractedIdData);
+        const selectedVersiontable = Array.from(uniqueSet).map((item) => ({ table_id: item }));
+        setTables(selectedVersiontable);
       } catch (error) {
         toast.error('Could not fetch the tables.', {
           position: 'top-center',
         });
         closeModal();
       }
+      setVersionSelectLoading(false);
     }
-    fetchAppVersions();
     fetchAppTables();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [versionId]);
 
-  const exportApp = (app, versionId, exportTjDb, tables) => {
+  const exportApp = (app, versionId, exportTjDb, exportTables) => {
     const appOpts = {
       app: [
         {
@@ -51,13 +91,14 @@ export default function ExportAppModal({ title, show, closeModal, customClassNam
         },
       ],
     };
+
     const requestBody = {
       ...appOpts,
-      ...(exportTjDb && { tooljet_database: tables }),
-      organization_id: app.organization_id,
+      ...(exportTjDb && { tooljet_database: exportTables }),
+      organization_id: app.organization_id || app.organizationId,
     };
 
-    appService
+    appsService
       .exportResource(requestBody)
       .then((data) => {
         const appName = app.name.replace(/\s+/g, '-').toLowerCase();
@@ -108,7 +149,7 @@ export default function ExportAppModal({ title, show, closeModal, customClassNam
           data-cy="modal-close-button"
         ></button>
       </BootstrapModal.Header>
-      {Array.isArray(versions) ? (
+      {Array.isArray(versions) && !loading ? (
         <>
           <BootstrapModal.Body>
             <div>
@@ -120,7 +161,7 @@ export default function ExportAppModal({ title, show, closeModal, customClassNam
                   versionId={currentVersion?.id}
                   data-cy={`${currentVersion?.id.toLowerCase().replace(/\s+/g, '-')}-value`}
                   versionName={currentVersion?.name}
-                  versionCreatedAt={currentVersion?.createdAt}
+                  versionCreatedAt={currentVersion?.created_at || currentVersion?.createdAt}
                   checked={versionId === currentVersion?.id}
                   setVersionId={setVersionId}
                   className="current-version-wrap"
@@ -138,7 +179,7 @@ export default function ExportAppModal({ title, show, closeModal, customClassNam
                           versionId={version.id}
                           data-cy={`${version.id.toLowerCase().replace(/\s+/g, '-')}-value`}
                           versionName={version.name}
-                          versionCreatedAt={version.createdAt}
+                          versionCreatedAt={version.createdAt || version.created_at}
                           key={version.name}
                           checked={versionId === version.id}
                           setVersionId={setVersionId}
@@ -164,12 +205,12 @@ export default function ExportAppModal({ title, show, closeModal, customClassNam
               className="import-export-footer-btns"
               variant="tertiary"
               data-cy="export-all-button"
-              onClick={() => exportApp(app, null, exportTjDb, tables)}
+              onClick={() => exportApp(app, null, exportTjDb, allTables)}
             >
               Export All
             </ButtonSolid>
             <ButtonSolid
-              className="import-export-footer-btns"
+              className={`import-export-footer-btns ${versionSelectLoading ? 'btn-loading' : ''}`}
               data-cy="export-selected-version-button"
               onClick={() => exportApp(app, versionId, exportTjDb, tables)}
             >

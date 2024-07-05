@@ -4,6 +4,8 @@ import _ from 'lodash';
 import { Tooltip } from 'react-tooltip';
 import { ButtonSolid } from '@/_ui/AppButton/AppButton';
 import SolidIcon from '@/_ui/Icon/SolidIcons';
+import cx from 'classnames';
+import { deepClone } from '@/_helpers/utilities/utils.helpers';
 
 export function AddNewRowComponent({
   hideAddNewRowPopup,
@@ -18,6 +20,7 @@ export function AddNewRowComponent({
   columns,
   addNewRowsDetails,
   utilityForNestedNewRow,
+  tableEvents,
 }) {
   const getNewRowObject = () => {
     return allColumns.reduce((accumulator, column) => {
@@ -51,9 +54,8 @@ export function AddNewRowComponent({
         accumulator[index] = nestedData;
         return accumulator;
       }, {});
-      setExposedVariable('newRows', newRowsState)?.then(() => {
-        mergeToAddNewRowsDetails({ newRowsDataUpdates: newRowDataUpdates });
-      });
+      setExposedVariable('newRows', newRowsState);
+      mergeToAddNewRowsDetails({ newRowsDataUpdates: newRowDataUpdates });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -77,7 +79,7 @@ export function AddNewRowComponent({
       <div className="table-responsive jet-data-table">
         <table
           {...getTableProps()}
-          className={`table table-vcenter table-nowrap ${tableType} ${darkMode && 'dark-theme'}`}
+          className={`table table-vcenter table-nowrap ${tableType} ${darkMode && 'dark-theme table-dark'}`}
         >
           <thead>
             {headerGroups.map((headerGroup, index) => {
@@ -114,7 +116,25 @@ export function AddNewRowComponent({
                     let cellProps = cell.getCellProps();
                     const isEditable = true;
                     return (
-                      <td key={index} {...cellProps} style={{ ...cellProps.style }}>
+                      <td
+                        key={index}
+                        {...cellProps}
+                        style={{ ...cellProps.style, backgroundColor: 'inherit' }}
+                        className={cx(`table-text-align-${cell.column.horizontalAlignment}  td`, {
+                          'has-actions': cell.column.id === 'rightActions' || cell.column.id === 'leftActions',
+                          'has-left-actions': cell.column.id === 'leftActions',
+                          'has-right-actions': cell.column.id === 'rightActions',
+                          'has-text': cell.column.columnType === 'text' || isEditable,
+                          'has-dropdown': cell.column.columnType === 'dropdown',
+                          'has-multiselect': cell.column.columnType === 'multiselect',
+                          'has-datepicker': cell.column.columnType === 'datepicker',
+                          'align-items-center flex-column': cell.column.columnType === 'selector',
+                          // [cellSize]: true,
+                          'selector-column': cell.column.columnType === 'selector' && cell.column.id === 'selection',
+                          'has-select': ['select', 'newMultiSelect'].includes(cell.column.columnType),
+                          isEditable: isEditable,
+                        })}
+                      >
                         <div
                           className={`td-container ${cell.column.columnType === 'image' && 'jet-table-image-column'} ${
                             cell.column.columnType !== 'image' && 'w-100 h-100'
@@ -133,7 +153,7 @@ export function AddNewRowComponent({
         <button
           className="btn btn-light btn-sm m-2"
           onClick={() => {
-            const rowData = _.cloneDeep(newRowsState);
+            const rowData = deepClone(newRowsState);
             const index = rowData.length;
             let newRow = getNewRowObject();
             newRow = utilityForNestedNewRow(newRow);
@@ -144,10 +164,9 @@ export function AddNewRowComponent({
               accumulator.push(newRowDataUpdates[row]);
               return accumulator;
             }, []);
-            setExposedVariable('newRows', newRowAddedExposedVar)?.then(() => {
-              mergeToAddNewRowsDetails({ newRowsDataUpdates: newRowDataUpdates });
-              setNewRowsState(rowData);
-            });
+            setExposedVariable('newRows', newRowAddedExposedVar);
+            mergeToAddNewRowsDetails({ newRowsDataUpdates: newRowDataUpdates });
+            setNewRowsState(rowData);
           }}
           data-tooltip-id="tooltip-for-add-new-row"
           data-tooltip-content="Add another row"
@@ -160,11 +179,10 @@ export function AddNewRowComponent({
         <ButtonSolid
           variant="primary"
           className={`tj-text-xsm`}
-          onClick={() => {
-            onEvent('onNewRowsAdded', { component }).then(() => {
-              mergeToAddNewRowsDetails({ newRowsDataUpdates: {}, newRowsChangeSet: {}, addingNewRows: false });
-              setNewRowsState([]);
-            });
+          onClick={async () => {
+            await onEvent('onNewRowsAdded', tableEvents, { component });
+            mergeToAddNewRowsDetails({ newRowsDataUpdates: {}, newRowsChangeSet: {}, addingNewRows: false });
+            setNewRowsState([]);
           }}
           size="sm"
           customStyles={{ padding: '10px 20px' }}
@@ -175,10 +193,9 @@ export function AddNewRowComponent({
           variant="tertiary"
           className={`tj-text-xsm`}
           onClick={() => {
-            setExposedVariable('newRows', [])?.then(() => {
-              mergeToAddNewRowsDetails({ newRowsDataUpdates: {}, newRowsChangeSet: {}, addingNewRows: false });
-              setNewRowsState([]);
-            });
+            setExposedVariable('newRows', []);
+            mergeToAddNewRowsDetails({ newRowsDataUpdates: {}, newRowsChangeSet: {}, addingNewRows: false });
+            setNewRowsState([]);
           }}
           size="sm"
           customStyles={{ padding: '10px 20px' }}

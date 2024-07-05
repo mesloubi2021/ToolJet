@@ -2,9 +2,10 @@ import { QueryError } from 'src/modules/data_sources/query.errors';
 import * as sanitizeHtml from 'sanitize-html';
 import { EntityManager, getManager } from 'typeorm';
 import { isEmpty } from 'lodash';
-const protobuf = require('protobufjs');
 import { ConflictException } from '@nestjs/common';
 import { DataBaseConstraints } from './db_constraints.constants';
+const protobuf = require('protobufjs');
+const semver = require('semver');
 
 export function maybeSetSubPath(path) {
   const hasSubPath = process.env.SUB_PATH !== undefined;
@@ -80,21 +81,46 @@ export async function dbTransactionWrap(operation: (...args) => any, manager?: E
   }
 }
 
-export const defaultAppEnvironments = [{ name: 'production', isDefault: true, priority: 3 }];
-export async function catchDbException(
-  operation: () => any,
-  dbConstraint: DataBaseConstraints,
-  errorMessage: string
+export const updateTimestampForAppVersion = async (manager, appVersionId) => {
+  const appVersion = await manager.findOne('app_versions', appVersionId);
+  if (appVersion) {
+    await manager.update('app_versions', appVersionId, { updatedAt: new Date() });
+  }
+};
+
+export async function dbTransactionForAppVersionAssociationsUpdate(
+  operation: (...args) => any,
+  appVersionId: string
 ): Promise<any> {
+  return await getManager().transaction(async (manager) => {
+    const result = await operation(manager);
+
+    await updateTimestampForAppVersion(manager, appVersionId);
+
+    return result;
+  });
+}
+
+type DbContraintAndMsg = {
+  dbConstraint: DataBaseConstraints;
+  message: string;
+};
+
+export async function catchDbException(operation: () => any, dbConstraints: DbContraintAndMsg[]): Promise<any> {
   try {
     return await operation();
   } catch (err) {
-    if (err?.message?.includes(dbConstraint)) {
-      throw new ConflictException(errorMessage);
-    }
+    dbConstraints.map((dbConstraint) => {
+      if (err?.message?.includes(dbConstraint.dbConstraint)) {
+        throw new ConflictException(dbConstraint.message);
+      }
+    });
+
     throw err;
   }
 }
+
+export const defaultAppEnvironments = [{ name: 'production', isDefault: true, priority: 3 }];
 
 export function isPlural(data: Array<any>) {
   return data?.length > 1 ? 's' : '';
@@ -153,8 +179,13 @@ export const processDataInBatches = async <T>(
   } while (data.length === batchSize);
 };
 
-export const generateNextName = (firstWord: string) => {
-  return `${firstWord} ${Date.now()}`;
+export const generateNextNameAndSlug = (firstWord: string) => {
+  const name = `${firstWord} ${Date.now()}`;
+  const slug = name.replace(/\s+/g, '-').toLowerCase();
+  return {
+    name,
+    slug,
+  };
 };
 
 export const truncateAndReplace = (name) => {
@@ -169,20 +200,119 @@ export const generateInviteURL = (
   invitationToken: string,
   organizationToken?: string,
   organizationId?: string,
-  source?: string
+  source?: string,
+  redirectTo?: string
 ) => {
   const host = process.env.TOOLJET_HOST;
   const subpath = process.env.SUB_PATH;
-
-  return `${host}${subpath ? subpath : '/'}invitations/${invitationToken}${
-    organizationToken ? `/workspaces/${organizationToken}${organizationId ? `?oid=${organizationId}` : ''}` : ''
-  }${source ? `${organizationId ? '&' : '?'}source=${source}` : ''}`;
+  const baseURL = `${host}${subpath ? subpath : '/'}`;
+  const inviteSupath = `invitations/${invitationToken}`;
+  const organizationSupath = `${organizationToken ? `/workspaces/${organizationToken}` : ''}`;
+  let queryString = new URLSearchParams({
+    ...(organizationId && { oid: organizationId }),
+    ...(source && { source }),
+    ...(redirectTo && { redirectTo }),
+  }).toString();
+  queryString = queryString ? `?${queryString}` : '';
+  return `${baseURL}${inviteSupath}${organizationSupath}${queryString}`;
 };
 
-export const generateOrgInviteURL = (organizationToken: string, organizationId?: string) => {
+export const generateOrgInviteURL = (
+  organizationToken: string,
+  organizationId?: string,
+  fullUrl = true,
+  redirectTo?: string
+) => {
   const host = process.env.TOOLJET_HOST;
   const subpath = process.env.SUB_PATH;
-  return `${host}${subpath ? subpath : '/'}organization-invitations/${organizationToken}${
+  return `${fullUrl ? `${host}${subpath ? subpath : '/'}` : '/'}organization-invitations/${organizationToken}${
     organizationId ? `?oid=${organizationId}` : ''
-  }`;
+  }${redirectTo ? `&redirectTo=${redirectTo}` : ''}`;
+};
+
+export function extractMajorVersion(version) {
+  return semver.valid(semver.coerce(version));
+}
+
+export function checkVersionCompatibility(importingVersion) {
+  return semver.gte(semver.coerce(globalThis.TOOLJET_VERSION), semver.coerce(importingVersion));
+}
+
+/**
+ * Checks if a given Tooljet version is compatible with normalized app definition schemas.
+ *
+ * This function uses the 'semver' library to compare the provided version with a minimum version requirement
+ * for normalized app definition schemas (2.24.1). It returns true if the version is greater than or equal to
+ * the required version, indicating compatibility.
+ *
+ * @param {string} version - The Tooljet version to check.
+ * @returns {boolean} - True if the version is compatible, false otherwise.
+ */
+export function isTooljetVersionWithNormalizedAppDefinitionSchem(version) {
+  return semver.satisfies(semver.coerce(version), '>= 2.24.0');
+}
+
+export function isVersionGreaterThanOrEqual(version1: string, version2: string) {
+  if (!version1) return false;
+
+  const v1Parts = version1.split('-')[0].split('.').map(Number);
+  const v2Parts = version2.split('-')[0].split('.').map(Number);
+
+  for (let i = 0; i < Math.max(v1Parts.length, v2Parts.length); i++) {
+    const v1Part = +v1Parts[i] || 0;
+    const v2Part = +v2Parts[i] || 0;
+
+    if (v1Part < v2Part) {
+      return false;
+    } else if (v1Part > v2Part) {
+      return true;
+    }
+  }
+
+  return true;
+}
+
+export const getMaxCopyNumber = (existNameList, splitChar = '_') => {
+  if (existNameList.length == 0) return '';
+  const filteredNames = existNameList.filter((name) => {
+    const parts = name.split(splitChar);
+    return !isNaN(parseInt(parts[parts.length - 1]));
+  });
+
+  // Extracting numbers from the filtered names
+  const numbers = filteredNames.map((name) => {
+    const parts = name.split(splitChar);
+    return parseInt(parts[parts.length - 1]);
+  });
+
+  // Finding the maximum number
+  // Creating the new name with maxNumber + 1
+  const maxNumber = Math.max(...numbers, 0);
+  return maxNumber + 1;
+};
+
+export const fullName = (firstName: string, lastName: string) => `${firstName || ''}${lastName ? ` ${lastName}` : ''}`;
+
+export const isValidDomain = (email: string, restrictedDomain: string): boolean => {
+  if (!email) {
+    return false;
+  }
+  const domain = email.substring(email.lastIndexOf('@') + 1);
+
+  if (!restrictedDomain) {
+    return true;
+  }
+  if (!domain) {
+    return false;
+  }
+  if (
+    !restrictedDomain
+      .split(',')
+      .map((e) => e && e.trim())
+      .filter((e) => !!e)
+      .includes(domain)
+  ) {
+    return false;
+  }
+  return true;
 };

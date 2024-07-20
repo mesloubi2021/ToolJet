@@ -11,6 +11,7 @@ import { BadRequestException } from '@nestjs/common';
 import { cleanObject, dbTransactionWrap } from 'src/helpers/utils.helper';
 import { CreateFileDto } from '@dto/create-file.dto';
 import { WORKSPACE_USER_STATUS } from 'src/helpers/user_lifecycle';
+import { Organization } from 'src/entities/organization.entity';
 const uuid = require('uuid');
 const bcrypt = require('bcrypt');
 
@@ -21,15 +22,24 @@ export class UsersService {
     @InjectRepository(User)
     private usersRepository: Repository<User>,
     @InjectRepository(App)
-    private appsRepository: Repository<App>
+    private appsRepository: Repository<App>,
+    @InjectRepository(Organization)
+    private organizationsRepository: Repository<Organization>
   ) {}
 
   async getCount(): Promise<number> {
     return this.usersRepository.count();
   }
 
-  async findOne(id: string): Promise<User> {
-    return this.usersRepository.findOne({ where: { id } });
+  async getAppOrganizationDetails(app: App): Promise<Organization> {
+    return this.organizationsRepository.findOneOrFail({
+      select: ['id', 'slug'],
+      where: { id: app.organizationId },
+    });
+  }
+
+  async findOne(where = {}): Promise<User> {
+    return this.usersRepository.findOne({ where });
   }
 
   async findByEmail(
@@ -42,6 +52,7 @@ export class UsersService {
       if (!organizationId) {
         return manager.findOne(User, {
           where: { email },
+          relations: ['organization'],
         });
       } else {
         const statusList = status
@@ -199,7 +210,6 @@ export class UsersService {
       if (removeGroups.includes('all_users')) {
         throw new BadRequestException('Cannot remove user from default group.');
       }
-
       await dbTransactionWrap(async (manager: EntityManager) => {
         const groupPermissions = await manager.find(GroupPermission, {
           group: In(removeGroups),

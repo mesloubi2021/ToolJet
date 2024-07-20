@@ -4,25 +4,26 @@ import { toast } from 'react-hot-toast';
 import CreateColumnForm from '../../Forms/ColumnForm';
 import { TooljetDatabaseContext } from '../../index';
 import { tooljetDatabaseService } from '@/_services';
-import SolidIcon from '@/_ui/Icon/SolidIcons';
+import { getColumnDataType } from '../../constants';
 
-const CreateColumnDrawer = ({ setIsCreateColumnDrawerOpen, isCreateColumnDrawerOpen }) => {
-  const { organizationId, selectedTable, setColumns, setSelectedTableData } = useContext(TooljetDatabaseContext);
+const CreateColumnDrawer = ({
+  setIsCreateColumnDrawerOpen,
+  isCreateColumnDrawerOpen,
+  rows,
+  referencedColumnDetails,
+  setReferencedColumnDetails,
+}) => {
+  const { organizationId, selectedTable, setColumns, setPageCount, handleRefetchQuery, pageSize, setForeignKeys } =
+    useContext(TooljetDatabaseContext);
 
   return (
     <>
-      <button
-        onClick={() => setIsCreateColumnDrawerOpen(!isCreateColumnDrawerOpen)}
-        className={`ghost-black-operation ${isCreateColumnDrawerOpen ? 'open' : ''}`}
-        data-cy="add-new-column-button"
+      <Drawer
+        isOpen={isCreateColumnDrawerOpen}
+        onClose={() => setIsCreateColumnDrawerOpen(false)}
+        position="right"
+        className="tj-db-drawer"
       >
-        <SolidIcon name="column" width="14" fill={isCreateColumnDrawerOpen ? '#3E63DD' : '#889096'} />
-        <span className=" tj-text-xsm font-weight-500" style={{ marginLeft: '6px' }}>
-          Add new column
-        </span>
-      </button>
-
-      <Drawer isOpen={isCreateColumnDrawerOpen} onClose={() => setIsCreateColumnDrawerOpen(false)} position="right">
         <CreateColumnForm
           onCreate={() => {
             tooljetDatabaseService.viewTable(organizationId, selectedTable.table_name).then(({ data = [], error }) => {
@@ -31,33 +32,33 @@ const CreateColumnDrawer = ({ setIsCreateColumnDrawerOpen, isCreateColumnDrawerO
                 return;
               }
 
-              if (data?.result?.length > 0) {
+              const { foreign_keys = [] } = data?.result || {};
+              if (data?.result?.columns?.length > 0) {
                 setColumns(
-                  data?.result.map(({ column_name, data_type, keytype, ...rest }) => ({
+                  data?.result?.columns.map(({ column_name, data_type, ...rest }) => ({
                     Header: column_name,
                     accessor: column_name,
-                    dataType: data_type,
-                    isPrimaryKey: keytype?.toLowerCase() === 'primary key',
+                    dataType: getColumnDataType({ column_default: rest.column_default, data_type }),
                     ...rest,
                   }))
                 );
               }
-            });
-            tooljetDatabaseService
-              .findOne(organizationId, selectedTable.id, 'order=id.desc')
-              .then(({ data = [], error }) => {
-                if (error) {
-                  toast.error(error?.message ?? `Failed to fetch table "${selectedTable.table_name}"`);
-                  return;
-                }
 
-                if (Array.isArray(data) && data?.length > 0) {
-                  setSelectedTableData(data);
-                }
-              });
+              if (foreign_keys.length > 0) {
+                setForeignKeys([...foreign_keys]);
+              } else {
+                setForeignKeys([]);
+              }
+            });
+            handleRefetchQuery({}, {}, 1, pageSize);
+            setPageCount(1);
             setIsCreateColumnDrawerOpen(false);
           }}
           onClose={() => setIsCreateColumnDrawerOpen(false)}
+          rows={rows}
+          referencedColumnDetails={referencedColumnDetails}
+          setReferencedColumnDetails={setReferencedColumnDetails}
+          initiator="CreateColumnForm"
         />
       </Drawer>
     </>

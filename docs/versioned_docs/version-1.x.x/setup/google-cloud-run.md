@@ -17,12 +17,14 @@ Follow the steps below to deploy ToolJet on Cloud run with `gcloud` CLI.
 
 1. Cloud Run requires prebuilt image to be present within cloud registry. You can pull specific tooljet image from docker hub and then tag with your project to push it to cloud registry.
 
-   ```bash
-   gcloud auth configure-docker
-   docker pull tooljet/tooljet-ce:latest
-   docker tag tooljet/tooljet-ce:latest gcr.io/<replace-your-project-id>/tooljet/tooljet-ce:latest
-   docker push gcr.io/<replace-your-project-id>/tooljet/tooljet-ce:latest
-   ```
+*Ensure you change `replace-with-your-project-id` in the below command with your project ID.*  
+
+```bash
+  gcloud auth configure-docker
+  docker pull tooljet/tooljet:EE-LTS-latest
+  docker tag tooljet/tooljet:EE-LTS-latest gcr.io/replace-with-your-project-id/tooljet/tooljet:EE-LTS-latest
+  docker push gcr.io/replace-with-your-project-id/tooljet/tooljet:EE-LTS-latest
+```
 
 2. Deploy new cloud run service
 
@@ -142,3 +144,19 @@ The deployment will fail as it only runs a seed script. Check logs to see that d
    ```
 
 The default username of the admin is `dev@tooljet.io` and the password is `password`.
+
+## Upgrading to the Latest Version
+
+The latest version includes architectural changes and, hence, comes with new migrations.
+
+If this is a new installation of the application, you may start directly with the latest version. This guide is not required for new installations.
+
+#### Prerequisites for Upgrading to the Latest Version:
+
+- It is **crucial to perform a comprehensive backup of your database** before starting the upgrade process to prevent data loss.
+
+- Ensure that your current version is v2.23.0-ee2.10.2 before upgrading. 
+
+- Users on versions earlier than v2.23.0-ee2.10.2 must first upgrade to this version before proceeding to the latest version.
+
+For specific issues or questions, refer to our **[Slack](https://tooljet.slack.com/join/shared_invite/zt-25438diev-mJ6LIZpJevG0LXCEcL0NhQ#)**.

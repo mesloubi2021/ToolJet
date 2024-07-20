@@ -1,32 +1,52 @@
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import Drawer from '@/_ui/Drawer';
 import { toast } from 'react-hot-toast';
 import CreateRowForm from '../../Forms/RowForm';
 import { TooljetDatabaseContext } from '../../index';
 import { tooljetDatabaseService } from '@/_services';
-import SolidIcon from '@/_ui/Icon/SolidIcons';
+import { listAllPrimaryKeyColumns } from '@/TooljetDatabase/constants';
+import PostgrestQueryBuilder from '@/_helpers/postgrestQueryBuilder';
 
-const CreateRowDrawer = ({ isCreateRowDrawerOpen, setIsCreateRowDrawerOpen }) => {
-  const { organizationId, selectedTable, setSelectedTableData, setTotalRecords } = useContext(TooljetDatabaseContext);
+const CreateRowDrawer = ({
+  isCreateRowDrawerOpen,
+  setIsCreateRowDrawerOpen,
+  referencedColumnDetails,
+  setReferencedColumnDetails,
+}) => {
+  const {
+    organizationId,
+    selectedTable,
+    setSelectedTableData,
+    setTotalRecords,
+    pageSize,
+    setSortFilters,
+    setQueryFilters,
+    columns,
+  } = useContext(TooljetDatabaseContext);
+  const [shouldResetRowForm, setShouldResetRowForm] = useState(0);
 
   return (
     <>
-      <button
-        onClick={() => {
-          setIsCreateRowDrawerOpen(!isCreateRowDrawerOpen);
-        }}
-        className={`ghost-black-operation ${isCreateRowDrawerOpen ? 'open' : ''}`}
+      <Drawer
+        isOpen={isCreateRowDrawerOpen}
+        onClose={() => setIsCreateRowDrawerOpen(false)}
+        position="right"
+        className="tj-db-drawer"
       >
-        <SolidIcon name="row" width="14" fill={isCreateRowDrawerOpen ? '#3E63DD' : '#889096'} />
-        <span data-cy="add-new-row-button-text" className="tj-text-xsm font-weight-500" style={{ marginLeft: '6px' }}>
-          Add new row
-        </span>
-      </button>
-      <Drawer isOpen={isCreateRowDrawerOpen} onClose={() => setIsCreateRowDrawerOpen(false)} position="right">
         <CreateRowForm
-          onCreate={() => {
+          onCreate={(shouldKeepDrawerOpen) => {
+            const limit = pageSize;
+            setSortFilters({});
+            setQueryFilters({});
+
+            const primaryKeyColumns = listAllPrimaryKeyColumns(columns);
+            const sortQuery = new PostgrestQueryBuilder();
+            primaryKeyColumns.map((primaryKeyColumnName) => {
+              sortQuery.order(primaryKeyColumnName, 'desc');
+            });
+
             tooljetDatabaseService
-              .findOne(organizationId, selectedTable.id, 'order=id.desc')
+              .findOne(organizationId, selectedTable.id, `${sortQuery.url.toString()}&limit=${limit}`)
               .then(({ headers, data = [], error }) => {
                 if (error) {
                   toast.error(error?.message ?? `Failed to fetch table "${selectedTable.table_name}"`);
@@ -39,9 +59,17 @@ const CreateRowDrawer = ({ isCreateRowDrawerOpen, setIsCreateRowDrawerOpen }) =>
                   setSelectedTableData(data);
                 }
               });
-            setIsCreateRowDrawerOpen(false);
+
+            const tableElement = document.querySelector('.tj-db-table');
+            if (tableElement) tableElement.scrollTop = 0;
+            if (!shouldKeepDrawerOpen) setIsCreateRowDrawerOpen(false);
+            setShouldResetRowForm((prev) => prev + 1);
           }}
           onClose={() => setIsCreateRowDrawerOpen(false)}
+          referencedColumnDetails={referencedColumnDetails}
+          setReferencedColumnDetails={setReferencedColumnDetails}
+          initiator="CreateRowForm"
+          shouldResetRowForm={shouldResetRowForm}
         />
       </Drawer>
     </>

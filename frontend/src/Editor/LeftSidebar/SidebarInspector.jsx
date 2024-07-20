@@ -3,14 +3,15 @@ import { HeaderSection } from '@/_ui/LeftSidebar';
 import JSONTreeViewer from '@/_ui/JSONTreeViewer';
 import _ from 'lodash';
 import { toast } from 'react-hot-toast';
-import { getSvgIcon } from '@/_helpers/appUtils';
-
+import Icon from '@/_ui/Icon/solidIcons/index';
 import { useGlobalDataSources } from '@/_stores/dataSourcesStore';
 import { useDataQueries } from '@/_stores/dataQueriesStore';
 import { useCurrentState } from '@/_stores/currentStateStore';
 import { useAppVersionStore } from '@/_stores/appVersionStore';
 import { shallow } from 'zustand/shallow';
 import { ButtonSolid } from '@/_ui/AppButton/AppButton';
+import { useEditorStore } from '@/_stores/editorStore';
+import DataSourceIcon from '@/Editor/QueryManager/Components/DataSourceIcon';
 
 const staticDataSources = [
   { kind: 'tooljetdb', id: 'null', name: 'Tooljet Database' },
@@ -37,31 +38,37 @@ export const LeftSidebarInspector = ({
     }),
     shallow
   );
-  const componentDefinitions = JSON.parse(JSON.stringify(appDefinition))['components'];
-  const selectedComponent = React.useMemo(() => {
-    return {
-      id: appDefinition['selectedComponent']?.id,
-      component: appDefinition['selectedComponent']?.component?.name,
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appDefinition['selectedComponent']]);
+  const { selectedComponents } = useEditorStore(
+    (state) => ({
+      selectedComponents: state.selectedComponents,
+    }),
+    shallow
+  );
   const currentState = useCurrentState();
 
+  const componentDefinitions = JSON.parse(JSON.stringify(appDefinition))['components'];
+
+  const selectedComponent = React.useMemo(() => {
+    const _selectedComponent = selectedComponents[selectedComponents.length - 1];
+
+    return {
+      id: _selectedComponent?.id,
+      component: _selectedComponent?.component?.name,
+    };
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedComponents]);
+
   const memoizedJSONData = React.useMemo(() => {
-    const updatedQueries = {};
     const { queries: currentQueries } = currentState;
-    if (!_.isEmpty(dataQueries)) {
-      dataQueries.forEach((query) => {
-        updatedQueries[query.name] = _.merge(currentQueries[query.name], { id: query.id });
-      });
-    }
-    // const data = _.merge(currentState, { queries: updatedQueries });
-    const jsontreeData = { ...currentState, queries: updatedQueries };
+
+    const jsontreeData = { ...currentState, queries: currentQueries };
     delete jsontreeData.errors;
     delete jsontreeData.client;
     delete jsontreeData.server;
     delete jsontreeData.actions;
     delete jsontreeData.succededQuery;
+    delete jsontreeData.layout;
 
     //*Sorted components and queries alphabetically
     const sortedComponents = Object.keys(jsontreeData['components'])
@@ -91,13 +98,10 @@ export const LeftSidebarInspector = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentState, JSON.stringify(dataQueries)]);
 
-  const queryIcons = Object.entries(currentState['queries']).map(([key, value]) => {
+  const queryIcons = dataQueries.map((query) => {
     const allDs = [...staticDataSources, ...dataSources];
-
-    const icon = allDs.find((ds) => ds.kind === value.kind);
-    const iconFile = icon?.plugin?.iconFile?.data ?? undefined;
-    const Icon = () => getSvgIcon(icon?.kind, 16, 16, iconFile ?? undefined);
-    return { iconName: key, jsx: () => <Icon style={{ height: 16, width: 16, marginRight: 12 }} /> };
+    const source = allDs.find((ds) => ds.kind === query.kind);
+    return { iconName: query.name, jsx: () => <DataSourceIcon source={source} height={16} /> };
   });
 
   const componentIcons = Object.entries(currentState['components']).map(([key, value]) => {
@@ -113,11 +117,111 @@ export const LeftSidebarInspector = ({
       };
     }
   });
+  const exposedVariablesIcon = Object.entries(currentState['components'])
+    .map(([key, value]) => {
+      const component = componentDefinitions[value.id]?.component ?? {};
+      const componentExposedVariables = value;
 
-  const iconsList = useMemo(() => [...queryIcons, ...componentIcons], [queryIcons, componentIcons]);
+      if (!_.isEmpty(component) && component.component === 'TextInput') {
+        const icons = [];
 
+        if (componentExposedVariables.disable) {
+          icons.push({
+            iconName: 'disable',
+            jsx: () => <Icon name={'warning'} height={16} width={16} fill="#DB4324" />,
+            className: 'component-icon',
+            tooltipMessage: 'This function will be deprecated soon, You can use setDisable as an alternative',
+            isInfoIcon: true,
+          });
+        }
+
+        if (componentExposedVariables.visibility) {
+          icons.push({
+            iconName: 'visibility',
+            jsx: () => <Icon name={'warning'} height={16} width={16} fill="#DB4324" />,
+            className: 'component-icon',
+            tooltipMessage: 'This function will be deprecated soon, You can use setVisibility as an alternative',
+            isInfoIcon: true,
+          });
+        }
+
+        return icons;
+      }
+      if (!_.isEmpty(component) && component.component === 'Checkbox') {
+        const icons = [];
+
+        if (componentExposedVariables.setChecked) {
+          icons.push({
+            iconName: 'setChecked',
+            jsx: () => <Icon name={'warning'} height={16} width={16} fill="#DB4324" />,
+            className: 'component-icon',
+            tooltipMessage: 'This function will be deprecated soon, You can use setValue as an alternative',
+            isInfoIcon: true,
+          });
+        }
+
+        return icons;
+      }
+
+      if (!_.isEmpty(component) && component.component === 'Button') {
+        const icons = [];
+
+        if (componentExposedVariables.disable) {
+          icons.push({
+            iconName: 'disable',
+            jsx: () => <Icon name={'warning'} height={16} width={16} fill="#DB4324" />,
+            className: 'component-icon',
+            tooltipMessage: 'This function will be deprecated soon, You can use setDisable as an alternative',
+            isInfoIcon: true,
+          });
+        }
+
+        if (componentExposedVariables.visibility) {
+          icons.push({
+            iconName: 'visibility',
+            jsx: () => <Icon name={'warning'} height={16} width={16} fill="#DB4324" />,
+            className: 'component-icon',
+            tooltipMessage: 'This function will be deprecated soon, You can use setVisibility as an alternative',
+            isInfoIcon: true,
+          });
+        }
+
+        if (componentExposedVariables.loading) {
+          icons.push({
+            iconName: 'loading',
+            jsx: () => <Icon name={'warning'} height={16} width={16} fill="#DB4324" />,
+            className: 'component-icon',
+            tooltipMessage: 'This function will be deprecated soon, You can use setLoading as an alternative',
+            isInfoIcon: true,
+          });
+        }
+
+        return icons;
+      }
+
+      if (!_.isEmpty(component) && component.component === 'Text' && componentExposedVariables?.visibility) {
+        return [
+          {
+            iconName: 'visibility',
+            jsx: () => <Icon name={'warning'} height={16} width={16} fill="#DB4324" />,
+            className: 'component-icon',
+            tooltipMessage: 'This function will be deprecated soon, You can use setVisibility as an alternative',
+            isInfoIcon: true,
+          },
+        ];
+      }
+
+      return [];
+    })
+    .flat()
+    .filter((value) => value !== undefined); // Remove undefined values
+
+  const iconsList = useMemo(
+    () => [...queryIcons, ...componentIcons, ...exposedVariablesIcon],
+    [queryIcons, componentIcons, exposedVariablesIcon]
+  );
   const handleRemoveComponent = (component) => {
-    removeComponent(component);
+    removeComponent(component.id);
   };
 
   const handleSelectComponentOnEditor = (component) => {

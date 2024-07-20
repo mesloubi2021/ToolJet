@@ -5,6 +5,8 @@ import { globalDatasourceService, appEnvironmentService, authenticationService }
 import { GlobalDataSourcesPage } from './GlobalDataSourcesPage';
 import { toast } from 'react-hot-toast';
 import { BreadCrumbContext } from '@/App/App';
+import { DATA_SOURCE_TYPE } from '@/_helpers/constants';
+import { fetchAndSetWindowTitle, pageTitles } from '@white-label/whiteLabelling';
 
 export const GlobalDataSourcesContext = createContext({
   showDataSourceManagerModal: false,
@@ -22,27 +24,32 @@ export const GlobalDatasources = (props) => {
   const [isLoading, setLoading] = useState(true);
   const [environments, setEnvironments] = useState([]);
   const [currentEnvironment, setCurrentEnvironment] = useState(null);
-  const [activeDatasourceList, setActiveDatasourceList] = useState('#databases');
+  const [activeDatasourceList, setActiveDatasourceList] = useState('#commonlyused');
   const navigate = useNavigate();
   const { updateSidebarNAV } = useContext(BreadCrumbContext);
 
+  if (!admin) {
+    navigate('/');
+  }
+
   useEffect(() => {
-    if (dataSources?.length == 0) updateSidebarNAV('Databases');
+    if (dataSources?.length == 0) updateSidebarNAV('Commonly used');
   }, []);
 
   useEffect(() => {
     selectedDataSource
       ? updateSidebarNAV(selectedDataSource.name)
-      : !activeDatasourceList && updateSidebarNAV('Databases');
+      : !activeDatasourceList && updateSidebarNAV('Commonly used');
+    fetchAndSetWindowTitle({ page: `${selectedDataSource?.name || pageTitles.DATA_SOURCES}` });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(dataSources), JSON.stringify(selectedDataSource)]);
 
   useEffect(() => {
     if (!admin) {
       toast.error("You don't have access to GDS, contact your workspace admin to add datasources");
-      navigate('/');
+    } else {
+      fetchEnvironments();
     }
-    fetchEnvironments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [admin]);
 
@@ -56,20 +63,41 @@ export const GlobalDatasources = (props) => {
     globalDatasourceService
       .getAll()
       .then((data) => {
-        const orderedDataSources = data.data_sources.sort((a, b) => a.name.localeCompare(b.name));
+        const orderedDataSources = data.data_sources
+          .map((ds) => {
+            if (ds.options && ds.options.connection_limit) {
+              return {
+                ...ds,
+                options: {
+                  ...ds.options,
+                  connectionLimit: ds.options.connection_limit,
+                },
+              };
+            }
+            return ds;
+          })
+          .sort((a, b) => {
+            if (a.type === DATA_SOURCE_TYPE.SAMPLE && b.type !== DATA_SOURCE_TYPE.SAMPLE) {
+              return -1; // a comes before b
+            } else if (a.type !== DATA_SOURCE_TYPE.SAMPLE && b.type === DATA_SOURCE_TYPE.SAMPLE) {
+              return 1; // b comes before a
+            } else {
+              // If types are the same or both are not 'sample', sort by name
+              return a.name.localeCompare(b.name);
+            }
+          });
         setDataSources([...(orderedDataSources ?? [])]);
         const ds = dataSource && orderedDataSources.find((ds) => ds.id === dataSource.id);
-
         if (!resetSelection && ds) {
           setEditing(true);
           setSelectedDataSource(ds);
           toggleDataSourceManagerModal(true);
         }
         if (orderedDataSources.length && resetSelection) {
-          setActiveDatasourceList('#databases');
+          setActiveDatasourceList('#commonlyused');
         }
         if (!orderedDataSources.length) {
-          setActiveDatasourceList('#databases');
+          setActiveDatasourceList('#commonlyused');
         }
         setLoading(false);
       })

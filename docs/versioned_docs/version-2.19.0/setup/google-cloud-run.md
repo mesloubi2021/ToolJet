@@ -18,13 +18,14 @@ Follow the steps below to deploy ToolJet on Cloud run with `gcloud` CLI.
 
 1. Cloud Run requires prebuilt image to be present within cloud registry. You can pull specific tooljet image from docker hub and then tag with your project to push it to cloud registry.
 
-   ```bash
-   gcloud auth configure-docker
-   docker pull tooljet/tooljet:latest
-   docker tag tooljet/tooljet:latest gcr.io/<replace-your-project-id>/tooljet/tooljet:latest
-   docker push gcr.io/<replace-your-project-id>/tooljet/tooljet:latest
-   ```
+*Ensure you change `replace-with-your-project-id` in the below command with your project ID.*  
 
+```bash
+  gcloud auth configure-docker
+  docker pull tooljet/tooljet:EE-LTS-latest
+  docker tag tooljet/tooljet:EE-LTS-latest gcr.io/replace-with-your-project-id/tooljet/tooljet:EE-LTS-latest
+  docker push gcr.io/replace-with-your-project-id/tooljet/tooljet:EE-LTS-latest
+```
   Please run the above command by launching GoogleCLI which will help to push the Tooljet application image to Google container registry. 
 
   <div style={{textAlign: 'center'}}>
@@ -46,12 +47,24 @@ Follow the steps below to deploy ToolJet on Cloud run with `gcloud` CLI.
   <img className="screenshot-full" src="/img/cloud-run/ingress-auth.png" alt="ingress-auth" />
   </div>
 
-4. Under containers tab, please make sure the port is set 3000 and command `npm, run, start:prod` is entered in container argument field with CPU capacity is set to 2GiB.
+4. Under containers tab, please make sure the port is set to 3000 and command `npm, run, start:prod` is entered in container argument field with CPU capacity set to 2GiB:
 
   <div style={{textAlign: 'center'}}>
-  <img className="screenshot-full" src="/img/cloud-run/port-and-capacity-postgrest.png" alt="port-and-capacity-tooljet" />
+  <img className="screenshot-full" src="/img/cloud-run/port-and-capacity-postgrest-v2.png" alt="port-and-capacity-tooljet" />
   </div>
 
+
+- If the command mentioned above is not compatible, please use the following command structure instead:
+
+ <div style={{textAlign: 'center'}}>
+  <img className="screenshot-full" src="/img/cloud-run/port-and-capacity-postgrest-alternative-command.png" alt="port-and-capacity-tooljet-alternative-command" />
+  </div>
+
+- Should you encounter any migration issues, please execute the following command. Be aware that executing this command may cause the revision to break. However, modifying the command back to `npm, run, start:prod` will successfully reboot the instance:
+
+ <div style={{textAlign: 'center'}}>
+  <img className="screenshot-full" src="/img/cloud-run/port-and-capacity-postgrest-migration-fix-command.png" alt="port-and-capacity-tooljet-migration-fix-command" />
+  </div>
 
 5. Under environmental variable please add the below Tooljet application variables. You can also refer env variable [**here**](/docs/setup/env-vars). 
 
@@ -127,7 +140,7 @@ If you intend to use this feature, you'd have to set up and deploy PostgREST ser
   <img className="screenshot-full" src="/img/cloud-run/port-and-capacity-postgrest.png" alt="port-and-capacity-postgrest" />
   </div>
   
-5. Under environmental variable please add corresponding Tooljet database env variables. You can also refer [env variable](/docs/setup/env-vars#tooljet-database).
+5. Under environmental variable please add corresponding Tooljet database env variables. You can also refer [env variable](/docs/setup/env-vars/#enable-tooljet-database--optional-).
 
 6. Please go to connection tab. Under Cloud SQL instance please select the PostgreSQL database which you have set-up for Tooljet application or the separate PostgreSQL database created respective to Tooljet Database from the drop-down option.
 
@@ -145,9 +158,26 @@ Once the Service is created and live, to make the  Cloud Service URL public. Ple
 
 
 
-7. Additional Environmental variable to be added to Tooljet application or Tooljet Server connect to PostgREST server. You can also refer env variable [**here**](/docs/setup/env-vars#tooljet-database)
+7. Additional Environmental variable to be added to Tooljet application or Tooljet Server connect to PostgREST server. You can also refer env variable [**here**](/docs/setup/env-vars/#enable-tooljet-database--optional-)
 
 
   <div style={{textAlign: 'center'}}>
   <img className="screenshot-full" src="/img/cloud-run/env-for-tooljet.png" alt="env-for-tooljet" />
   </div>
+
+
+## Upgrading to the Latest Version
+
+The latest version includes architectural changes and, hence, comes with new migrations.
+
+If this is a new installation of the application, you may start directly with the latest version. This guide is not required for new installations.
+
+#### Prerequisites for Upgrading to the Latest Version:
+
+- It is **crucial to perform a comprehensive backup of your database** before starting the upgrade process to prevent data loss.
+
+- Ensure that your current version is v2.23.0-ee2.10.2 before upgrading. 
+
+- Users on versions earlier than v2.23.0-ee2.10.2 must first upgrade to this version before proceeding to the latest version.
+
+For specific issues or questions, refer to our **[Slack](https://tooljet.slack.com/join/shared_invite/zt-25438diev-mJ6LIZpJevG0LXCEcL0NhQ#)**.

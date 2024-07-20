@@ -14,7 +14,12 @@ import {
   useColumnOrder,
 } from 'react-table';
 import cx from 'classnames';
-import { resolveReferences, validateWidget, determineJustifyContentValue } from '@/_helpers/utils';
+import {
+  resolveReferences,
+  validateWidget,
+  determineJustifyContentValue,
+  resolveWidgetFieldValue,
+} from '@/_helpers/utils';
 import { useExportData } from 'react-table-plugins';
 import Papa from 'papaparse';
 import { Pagination } from './Pagination';
@@ -37,6 +42,7 @@ import 'jspdf-autotable';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 // eslint-disable-next-line import/no-unresolved
 import { IconEyeOff } from '@tabler/icons-react';
+// eslint-disable-next-line import/no-unresolved
 import * as XLSX from 'xlsx/xlsx.mjs';
 import OverlayTrigger from 'react-bootstrap/OverlayTrigger';
 import Popover from 'react-bootstrap/Popover';
@@ -46,10 +52,16 @@ import GenerateEachCellValue from './GenerateEachCellValue';
 import { toast } from 'react-hot-toast';
 import { Tooltip } from 'react-tooltip';
 import { AddNewRowComponent } from './AddNewRowComponent';
+import { useAppInfo } from '@/_stores/appDataStore';
 import { ButtonSolid } from '@/_ui/AppButton/AppButton';
 import SolidIcon from '@/_ui/Icon/SolidIcons';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import { OverlayTriggerComponent } from './OverlayTriggerComponent';
+// eslint-disable-next-line import/no-unresolved
+import { diff } from 'deep-object-diff';
+import { isRowInValid } from '../tableUtils';
+import moment from 'moment';
+import { deepClone } from '@/_helpers/utilities/utils.helpers';
 
 // utilityForNestedNewRow function is used to construct nested object while adding or updating new row when '.' is present in column key for adding new row
 const utilityForNestedNewRow = (row) => {
@@ -92,7 +104,7 @@ export function Table({
   properties,
   variablesExposedForPreview,
   exposeToCodeHinter,
-  events,
+  // events,
   setProperty,
   mode,
   exposedVariables,
@@ -128,10 +140,23 @@ export function Table({
     showAddNewRowButton,
     allowSelection,
     enablePagination,
+    maxRowHeight,
+    autoHeight,
+    selectRowOnCellEdit,
+    contentWrapProperty,
+    boxShadow,
+    maxRowHeightValue,
+    borderColor,
+    isMaxRowHeightAuto,
+    columnHeaderWrap,
   } = loadPropertiesAndStyles(properties, styles, darkMode, component);
-
   const updatedDataReference = useRef([]);
   const preSelectRow = useRef(false);
+  const { events: allAppEvents } = useAppInfo();
+
+  const tableEvents = allAppEvents.filter((event) => event.target === 'component' && event.sourceId === id);
+  const tableColumnEvents = allAppEvents.filter((event) => event.target === 'table_column' && event.sourceId === id);
+  const tableActionEvents = allAppEvents.filter((event) => event.target === 'table_action' && event.sourceId === id);
 
   const getItemStyle = ({ isDragging, isDropAnimating }, draggableStyle) => ({
     ...draggableStyle,
@@ -140,11 +165,18 @@ export function Table({
     top: 'auto',
     borderRadius: '4px',
     ...(isDragging && {
-      marginLeft: '-280px', // hack changing marginLeft to -280px to bring the draggable header to the correct position at the start of drag
+      // marginLeft: '-280px', // hack changing marginLeft to -280px to bring the draggable header to the correct position at the start of drag
       display: 'flex',
       alignItems: 'center',
       paddingLeft: '10px',
       height: '30px',
+      position: 'absolute',
+      top: '0',
+      left: '0',
+      right: '0',
+      bottom: '0',
+      zIndex: '9999',
+      width: '60px',
     }),
     ...(!isDragging && { transform: 'translate(0,0)', width: '100%' }),
     ...(isDropAnimating && { transitionDuration: '0.001s' }),
@@ -154,11 +186,12 @@ export function Table({
   const [tableDetails, dispatch] = useReducer(reducer, initialState());
   const [hoverAdded, setHoverAdded] = useState(false);
   const [generatedColumn, setGeneratedColumn] = useState([]);
+  const [isCellValueChanged, setIsCellValueChanged] = useState(false);
+
   const mergeToTableDetails = (payload) => dispatch(reducerActions.mergeToTableDetails(payload));
   const mergeToFilterDetails = (payload) => dispatch(reducerActions.mergeToFilterDetails(payload));
   const mergeToAddNewRowsDetails = (payload) => dispatch(reducerActions.mergeToAddNewRowsDetails(payload));
   const mounted = useMounted();
-
   const [resizingColumnId, setResizingColumnId] = useState(null);
 
   const prevDataFromProps = useRef();
@@ -179,13 +212,14 @@ export function Table({
   );
 
   useEffect(() => {
-    const hoverEvent = component?.definition?.events?.find((event) => {
+    const hoverEvent = tableEvents?.find(({ event }) => {
       return event?.eventId == 'onRowHovered';
     });
-    if (hoverEvent?.eventId) {
+
+    if (hoverEvent?.event?.eventId) {
       setHoverAdded(true);
     }
-  }, [JSON.stringify(component.definition.events)]);
+  }, [JSON.stringify(tableEvents)]);
 
   function showFilters() {
     mergeToFilterDetails({ filtersVisible: true });
@@ -213,8 +247,10 @@ export function Table({
 
   function handleExistingRowCellValueChange(index, key, value, rowData) {
     const changeSet = tableDetails.changeSet;
+    setIsCellValueChanged(true);
+
     const dataUpdates = tableDetails.dataUpdates || [];
-    const clonedTableData = _.cloneDeep(tableData);
+    const clonedTableData = deepClone(tableData);
 
     let obj = changeSet ? changeSet[index] || {} : {};
     obj = _.set(obj, key, value);
@@ -246,10 +282,11 @@ export function Table({
 
   const copyOfTableDetails = useRef(tableDetails);
   useEffect(() => {
-    copyOfTableDetails.current = _.cloneDeep(tableDetails);
+    copyOfTableDetails.current = deepClone(tableDetails);
   }, [JSON.stringify(tableDetails)]);
 
   function handleNewRowCellValueChange(index, key, value, rowData) {
+    setIsCellValueChanged(true);
     const changeSet = copyOfTableDetails.current.addNewRowsDetails.newRowsChangeSet || {};
     const dataUpdates = copyOfTableDetails.current.addNewRowsDetails.newRowsDataUpdates || {};
     let obj = changeSet ? changeSet[index] || {} : {};
@@ -281,7 +318,7 @@ export function Table({
 
   function getExportFileBlob({ columns, fileType, fileName }) {
     let headers = columns.map((column) => {
-      return { exportValue: String(column.exportValue), key: column.key ? String(column.key) : column.key };
+      return { exportValue: String(column?.exportValue), key: column.key ? String(column.key) : column?.key };
     });
     let data = globalFilteredRows.map((row) => {
       return headers.reduce((accumulator, header) => {
@@ -326,20 +363,24 @@ export function Table({
     }
   }
 
+  function getExportFileName() {
+    return `${component?.name}_${moment().format('DD-MM-YYYY_HH-mm')}`;
+  }
+
   function onPageIndexChanged(page) {
     onComponentOptionChanged(component, 'pageIndex', page).then(() => {
-      onEvent('onPageChanged', { component, data: {} });
+      onEvent('onPageChanged', tableEvents, { component });
     });
   }
 
   function handleChangesSaved() {
-    const clonedTableData = _.cloneDeep(tableData);
+    const clonedTableData = deepClone(tableData);
     Object.keys(changeSet).forEach((key) => {
       clonedTableData[key] = {
         ..._.merge(clonedTableData[key], changeSet[key]),
       };
     });
-    updatedDataReference.current = _.cloneDeep(clonedTableData);
+    updatedDataReference.current = deepClone(clonedTableData);
 
     setExposedVariables({
       changeSet: {},
@@ -370,21 +411,27 @@ export function Table({
   let tableData = [],
     dynamicColumn = [];
 
-  const useDynamicColumn = resolveReferences(component.definition.properties?.useDynamicColumn?.value, currentState);
+  const useDynamicColumn = resolveWidgetFieldValue(component.definition.properties?.useDynamicColumn?.value);
   if (currentState) {
-    tableData = resolveReferences(component.definition.properties.data.value, currentState, []);
+    tableData = resolveWidgetFieldValue(component.definition.properties.data.value);
     dynamicColumn = useDynamicColumn
-      ? resolveReferences(component.definition.properties?.columnData?.value, currentState, []) ?? []
+      ? resolveWidgetFieldValue(component.definition.properties?.columnData?.value) ?? []
       : [];
-    if (!Array.isArray(tableData)) tableData = [];
+    if (!Array.isArray(tableData)) {
+      tableData = [];
+    } else {
+      tableData = tableData.filter((data) => data !== null && data !== undefined);
+    }
   }
 
   tableData = tableData || [];
 
   const tableRef = useRef();
 
+  const columnProperties = useDynamicColumn ? generatedColumn : component.definition.properties.columns.value;
+
   let columnData = generateColumnsData({
-    columnProperties: useDynamicColumn ? generatedColumn : component.definition.properties.columns.value,
+    columnProperties,
     columnSizes,
     currentState,
     handleCellValueChange: handleExistingRowCellValueChange,
@@ -399,17 +446,71 @@ export function Table({
     tableRef,
     t,
     darkMode,
+    tableColumnEvents: tableColumnEvents,
+    cellSize: cellSize,
+    maxRowHeightValue: maxRowHeightValue,
+    isMaxRowHeightAuto: isMaxRowHeightAuto,
   });
 
   columnData = useMemo(
     () =>
       columnData.filter((column) => {
-        if (resolveReferences(column.columnVisibility, currentState)) {
+        if (resolveReferences(column?.columnVisibility)) {
           return column;
         }
       }),
     [columnData, currentState]
   );
+
+  const transformations = columnProperties
+    .filter((column) => column.transformation && column.transformation != '{{cellValue}}')
+    .map((column) => ({
+      key: column.key ? column.key : column.name,
+      transformation: column.transformation,
+    }));
+
+  tableData = useMemo(() => {
+    return tableData.map((row) => {
+      const transformedObject = {};
+
+      transformations.forEach(({ key, transformation }) => {
+        const nestedKeys = key.includes('.') && key.split('.');
+        if (nestedKeys) {
+          // Single-level nested property
+          const [nestedKey, subKey] = nestedKeys;
+          const nestedObject = transformedObject?.[nestedKey] || { ...row[nestedKey] }; // Retain existing nested object
+          const newValue = resolveReferences(transformation, row[key], {
+            cellValue: row?.[nestedKey]?.[subKey],
+            rowData: row,
+          });
+
+          // Apply transformation to subKey
+          nestedObject[subKey] = newValue;
+
+          // Update transformedObject with the new nested object
+          transformedObject[nestedKey] = nestedObject;
+        } else {
+          // Non-nested property
+          transformedObject[key] = resolveReferences(transformation, row[key], {
+            cellValue: row[key],
+            rowData: row,
+          });
+        }
+      });
+
+      return {
+        ...row,
+        ...transformedObject,
+      };
+    });
+  }, [JSON.stringify([tableData, transformations, currentState])]);
+
+  useEffect(() => {
+    setExposedVariables({
+      currentData: tableData,
+      updatedData: tableData,
+    });
+  }, [JSON.stringify(tableData)]);
 
   const columnDataForAddNewRows = generateColumnsData({
     columnProperties: useDynamicColumn ? generatedColumn : component.definition.properties.columns.value,
@@ -428,7 +529,6 @@ export function Table({
     t,
     darkMode,
   });
-
   const [leftActionsCellData, rightActionsCellData] = useMemo(
     () =>
       generateActionsData({
@@ -437,18 +537,20 @@ export function Table({
         defaultColumn,
         fireEvent,
         setExposedVariables,
+        tableActionEvents,
       }),
-    [JSON.stringify(actions)]
+    [JSON.stringify(actions), tableActionEvents]
   );
 
   const textWrapActions = (id) => {
+    //should we remove this
     let wrapOption = tableDetails.columnProperties?.find((item) => {
       return item?.id == id;
     });
     return wrapOption?.textWrap;
   };
 
-  const optionsData = columnData.map((column) => column.columnOptions?.selectOptions);
+  const optionsData = columnData.map((column) => column?.columnOptions?.selectOptions);
   const columns = useMemo(
     () => {
       return [...leftActionsCellData, ...columnData, ...rightActionsCellData];
@@ -467,6 +569,8 @@ export function Table({
       darkMode,
       allowSelection,
       highlightSelectedRow,
+      JSON.stringify(tableActionEvents),
+      JSON.stringify(tableColumnEvents),
     ] // Hack: need to fix
   );
 
@@ -487,13 +591,13 @@ export function Table({
       }
     }
     return _.isEmpty(updatedDataReference.current) ? tableData : updatedDataReference.current;
-  }, [tableData.length, component.definition.properties.data.value, JSON.stringify(properties.data)]);
+  }, [tableData.length, component.definition.properties.data.value, JSON.stringify([properties.data, tableData])]);
 
   useEffect(() => {
     if (
       tableData.length != 0 &&
       component.definition.properties.autogenerateColumns?.value &&
-      (useDynamicColumn || mode === 'edit')
+      (useDynamicColumn || mode === 'edit' || mode === 'view')
     ) {
       const generatedColumnFromData = autogenerateColumns(
         tableData,
@@ -552,10 +656,11 @@ export function Table({
       columns,
       data,
       defaultColumn,
-      initialState: { pageIndex: 0, pageSize: -1 },
+      initialState: { pageIndex: 0, pageSize: 1 },
       pageCount: -1,
       manualPagination: false,
       getExportFileBlob,
+      getExportFileName,
       disableSortBy: !enabledSort,
       manualSortBy: serverSideSort,
       stateReducer: (newState, action, prevState) => {
@@ -600,8 +705,8 @@ export function Table({
             },
             Cell: ({ row }) => {
               return (
-                <div className="d-flex flex-column align-items-center">
-                  <IndeterminateCheckbox {...row.getToggleRowSelectedProps()} />
+                <div className="d-flex flex-column align-items-center justify-content-center h-100">
+                  <IndeterminateCheckbox {...row.getToggleRowSelectedProps()} fireEvent={fireEvent} />
                 </div>
               );
             },
@@ -640,9 +745,11 @@ export function Table({
     if (!sortOptions) {
       setExposedVariable('sortApplied', []);
     }
-    if (mounted) setExposedVariable('sortApplied', sortOptions);
-    fireEvent('onSort');
-  }, [sortOptions]);
+    if (mounted) {
+      setExposedVariable('sortApplied', sortOptions);
+      fireEvent('onSort');
+    }
+  }, [JSON.stringify(sortOptions)]);
 
   useEffect(() => {
     setExposedVariable('setPage', async function (targetPageIndex) {
@@ -689,12 +796,13 @@ export function Table({
       }
     });
   }, [JSON.stringify(tableData), JSON.stringify(tableDetails.changeSet)]);
+
   useEffect(() => {
     setExposedVariable('discardNewlyAddedRows', async function () {
       if (
-        tableDetails.addNewRowsDetails.addingNewRows &&
-        (Object.keys(tableDetails.addNewRowsDetails.newRowsChangeSet || {}).length > 0 ||
-          Object.keys(tableDetails.addNewRowsDetails.newRowsDataUpdates || {}).length > 0)
+        !_.isEmpty(exposedVariables.newRows) ||
+        !_.isEmpty(tableDetails.addNewRowsDetails.newRowsChangeSet) ||
+        !_.isEmpty(tableDetails.addNewRowsDetails.newRowsChangeSet)
       ) {
         setExposedVariables({
           newRows: [],
@@ -720,8 +828,9 @@ export function Table({
       mergeToTableDetails({ selectedRowsDetails });
     }
     if (
-      (!showBulkSelector && !highlightSelectedRow) ||
-      (showBulkSelector && !highlightSelectedRow && preSelectRow.current)
+      allowSelection &&
+      ((!showBulkSelector && !highlightSelectedRow) ||
+        (showBulkSelector && !highlightSelectedRow && preSelectRow.current))
     ) {
       const selectedRow = selectedFlatRows?.[0]?.original ?? {};
       const selectedRowId = selectedFlatRows?.[0]?.id ?? null;
@@ -752,8 +861,11 @@ export function Table({
       if (!serverSidePagination && clientSidePagination) {
         setPageSize(rowsPerPage || 10);
       }
+    } else {
+      setPageSize(rows?.length || 10);
     }
   }, [clientSidePagination, serverSidePagination, rows, rowsPerPage]);
+
   useEffect(() => {
     const pageData = page.map((row) => row.original);
     if (preSelectRow.current) {
@@ -764,22 +876,29 @@ export function Table({
         ['currentData', data],
         ['selectedRow', []],
         ['selectedRowId', null],
-      ]).then(() => {
-        if (tableDetails.selectedRowId || !_.isEmpty(tableDetails.selectedRowDetails)) {
-          toggleAllRowsSelected(false);
-          mergeToTableDetails({ selectedRow: {}, selectedRowId: null, selectedRowDetails: [] });
-        }
-      });
+      ]);
+      if (tableDetails.selectedRowId || !_.isEmpty(tableDetails.selectedRowDetails)) {
+        toggleAllRowsSelected(false);
+        mergeToTableDetails({ selectedRow: {}, selectedRowId: null, selectedRowDetails: [] });
+      }
     }
   }, [tableData.length, _.toString(page), pageIndex, _.toString(data)]);
 
   useEffect(() => {
     const newColumnSizes = { ...columnSizes, ...state.columnResizing.columnWidths };
-    if (!state.columnResizing.isResizingColumn && !_.isEmpty(newColumnSizes)) {
+
+    const isColumnSizeChanged = !_.isEmpty(diff(columnSizes, newColumnSizes));
+
+    if (isColumnSizeChanged && !state.columnResizing.isResizingColumn && !_.isEmpty(newColumnSizes)) {
       changeCanDrag(true);
-      paramUpdated(id, 'columnSizes', {
-        value: newColumnSizes,
-      });
+      paramUpdated(
+        id,
+        'columnSizes',
+        {
+          value: newColumnSizes,
+        },
+        { componentDefinitionChanged: true }
+      );
     } else {
       changeCanDrag(false);
     }
@@ -787,6 +906,7 @@ export function Table({
 
   const [paginationInternalPageIndex, setPaginationInternalPageIndex] = useState(pageIndex ?? 1);
   const [rowDetails, setRowDetails] = useState();
+
   useEffect(() => {
     if (pageCount <= pageIndex) gotoPage(pageCount - 1);
   }, [pageCount]);
@@ -817,6 +937,7 @@ export function Table({
       );
     }
   }, [JSON.stringify(changeSet)]);
+
   useEffect(() => {
     if (
       allowSelection &&
@@ -826,25 +947,47 @@ export function Table({
     ) {
       const preSelectedRowDetails = getDetailsOfPreSelectedRow();
       if (_.isEmpty(preSelectedRowDetails)) return;
-
       const selectedRow = preSelectedRowDetails?.original ?? {};
+      const selectedRowIndex = preSelectedRowDetails?.index ?? null;
       const selectedRowId = preSelectedRowDetails?.id ?? null;
-      const pageNumber = Math.floor(selectedRowId / rowsPerPage) + 1;
+      const pageNumber = Math.floor(selectedRowIndex / rowsPerPage) + 1;
+
       preSelectRow.current = true;
       if (highlightSelectedRow) {
-        setExposedVariables({ selectedRow: selectedRow, selectedRowId: selectedRowId });
+        setExposedVariables({ selectedRow: selectedRow, selectedRowId });
         toggleRowSelected(selectedRowId, true);
-        mergeToTableDetails({ selectedRow: selectedRow, selectedRowId: selectedRowId });
+        mergeToTableDetails({ selectedRow: selectedRow, selectedRowId });
       } else {
         toggleRowSelected(selectedRowId, true);
       }
       if (pageIndex >= 0 && pageNumber !== pageIndex + 1) {
         gotoPage(pageNumber - 1);
+        setPaginationInternalPageIndex(pageNumber);
       }
     }
 
     //hack : in the initial render, data is undefined since, upon feeding data to the table from some query, query inside current state is {}. Hence we added data in the dependency array, now question is should we add data or rows?
   }, [JSON.stringify(defaultSelectedRow), JSON.stringify(data)]);
+
+  useEffect(() => {
+    // csa for select all rows in table
+    setExposedVariable('selectAllRows', async function () {
+      if (showBulkSelector) {
+        await toggleAllRowsSelected(true);
+      }
+    });
+    // csa for deselect all rows in table
+    setExposedVariable('deselectAllRows', async function () {
+      if (showBulkSelector) {
+        await toggleAllRowsSelected(false);
+      }
+    });
+  }, [JSON.stringify(tableDetails.selectedRowsDetails)]);
+
+  const pageData = page.map((row) => row.original);
+  useEffect(() => {
+    setExposedVariable('currentPageData', pageData);
+  }, [JSON.stringify(pageData)]);
 
   function downlaodPopover() {
     const options = [
@@ -906,7 +1049,7 @@ export function Table({
           </div>
           {allColumns.map(
             (column) =>
-              typeof column.Header === 'string' && (
+              typeof column?.Header === 'string' && (
                 <div key={column.id}>
                   <div>
                     <label className="dropdown-item d-flex cursor-pointer">
@@ -946,15 +1089,16 @@ export function Table({
     <div
       data-cy={`draggable-widget-${String(component.name).toLowerCase()}`}
       data-disabled={parsedDisabledState}
-      className={`card jet-table table-component ${darkMode && 'dark-theme'}`}
+      className={`card jet-table table-component ${darkMode ? 'dark-theme' : 'light-theme'}`}
       style={{
         width: `100%`,
         height: `${height}px`,
         display: parsedWidgetVisibility ? '' : 'none',
         overflow: 'hidden',
         borderRadius: Number.parseFloat(borderRadius),
-        boxShadow: styles.boxShadow,
+        boxShadow,
         padding: '8px',
+        borderColor: borderColor,
       }}
       onClick={(event) => {
         onComponentClick(id, component, event);
@@ -976,14 +1120,13 @@ export function Table({
             )}
             {showFilterButton && !loadingState && (
               <div className="position-relative">
-                {''}
                 <Tooltip id="tooltip-for-filter-data" className="tooltip" />
                 <ButtonSolid
                   variant="tertiary"
                   className={`tj-text-xsm ${tableDetails.filterDetails.filtersVisible && 'always-active-btn'}`}
                   customStyles={{ minWidth: '32px' }}
                   leftIcon="filter"
-                  fill={`var(--slate11)`}
+                  fill={`var(--icons-default)`}
                   iconWidth="16"
                   onClick={(e) => {
                     if (tableDetails?.filterDetails?.filtersVisible) {
@@ -1032,12 +1175,12 @@ export function Table({
             {displaySearchBox && !loadingState && (
               <GlobalFilter
                 globalFilter={state.globalFilter}
-                useAsyncDebounce={useAsyncDebounce}
                 setGlobalFilter={setGlobalFilter}
                 onComponentOptionChanged={onComponentOptionChanged}
                 component={component}
-                onEvent={onEvent}
                 darkMode={darkMode}
+                setExposedVariable={setExposedVariable}
+                fireEvent={fireEvent}
               />
             )}
           </div>
@@ -1052,7 +1195,9 @@ export function Table({
           {...getTableProps()}
           className={`table table-vcenter table-nowrap ${tableType} ${darkMode && 'table-dark'} ${
             tableDetails.addNewRowsDetails.addingNewRows && 'disabled'
-          } ${!loadingState && page.length !== 0 && 'h-100'}`}
+          } ${!loadingState && page.length !== 0 && 'h-100'} ${
+            state?.columnResizing?.isResizingColumn ? 'table-resizing' : ''
+          }`}
           style={computedStyles}
         >
           <thead>
@@ -1062,7 +1207,7 @@ export function Table({
                 onDragStart={() => {
                   currentColOrder.current = allColumns?.map((o) => o.id);
                 }}
-                onDragUpdate={(dragUpdateObj) => {
+                onDragEnd={(dragUpdateObj) => {
                   const colOrder = [...currentColOrder.current];
                   const sIndex = dragUpdateObj.source.index;
                   const dIndex = dragUpdateObj.destination && dragUpdateObj.destination.index;
@@ -1139,7 +1284,7 @@ export function Table({
                                     },
                                   };
                                 }
-                                const isEditable = resolveReferences(column?.isEditable ?? false, currentState);
+                                const isEditable = resolveReferences(column?.isEditable ?? false);
                                 return (
                                   <th
                                     key={index}
@@ -1177,25 +1322,30 @@ export function Table({
                                           `}
                                       >
                                         <div>
-                                          {column.columnType !== 'selector' && isEditable && (
-                                            <SolidIcon
-                                              name="editable"
-                                              width="16px"
-                                              height="16px"
-                                              fill={darkMode ? '#4C5155' : '#C1C8CD'}
-                                              vievBox="0 0 16 16"
-                                            />
-                                          )}
+                                          {column.columnType !== 'selector' &&
+                                            column.columnType !== 'image' &&
+                                            isEditable && (
+                                              <SolidIcon
+                                                name="editable"
+                                                width="16px"
+                                                height="16px"
+                                                fill={darkMode ? '#4C5155' : '#C1C8CD'}
+                                                vievBox="0 0 16 16"
+                                              />
+                                            )}
                                         </div>
                                         <div
                                           data-cy={`column-header-${String(column.exportValue)
                                             .toLowerCase()
                                             .replace(/\s+/g, '-')}`}
-                                          className={`header-text ${
-                                            column.id === 'selection' &&
-                                            column.columnType === 'selector' &&
-                                            'selector-column'
-                                          }`}
+                                          className={cx('header-text', {
+                                            'selector-column':
+                                              column.id === 'selection' && column.columnType === 'selector',
+                                            'text-truncate':
+                                              resolveReferences(columnHeaderWrap, currentState) === 'fixed',
+                                            'wrap-wrapper':
+                                              resolveReferences(columnHeaderWrap, currentState) === 'wrap',
+                                          })}
                                         >
                                           {column.render('Header')}
                                         </div>
@@ -1246,7 +1396,14 @@ export function Table({
                                           ? ''
                                           : 'resizer'
                                       }  ${column.isResizing ? 'isResizing' : ''}`}
-                                    ></div>
+                                    >
+                                      <div
+                                        className="table-column-resize-handle"
+                                        style={{
+                                          ...(column.isResizing && { display: 'block' }),
+                                        }}
+                                      ></div>
+                                    </div>
                                   </th>
                                 );
                               }}
@@ -1264,6 +1421,26 @@ export function Table({
             <tbody {...getTableBodyProps()} style={{ color: computeFontColor() }}>
               {page.map((row, index) => {
                 prepareRow(row);
+                let rowProps = { ...row.getRowProps() };
+                const contentWrap = resolveReferences(contentWrapProperty);
+                const isMaxRowHeightAuto = maxRowHeight === 'auto';
+                rowProps.style.minHeight = cellSize === 'condensed' ? '39px' : '45px'; // 1px is removed to accomodate 1px border-bottom
+                let cellMaxHeight;
+                let cellHeight;
+                if (contentWrap) {
+                  cellMaxHeight = isMaxRowHeightAuto ? 'fit-content' : resolveReferences(maxRowHeightValue) + 'px';
+                  rowProps.style.maxHeight = cellMaxHeight;
+                } else {
+                  cellMaxHeight = cellSize === 'condensed' ? 40 : 46;
+                  cellHeight = cellSize === 'condensed' ? 40 : 46;
+                  rowProps.style.maxHeight = cellMaxHeight + 'px';
+                  rowProps.style.height = cellHeight + 'px';
+                }
+                const showInvalidError = row.cells.some((cell) => isRowInValid(cell, currentState, changeSet));
+                if (showInvalidError) {
+                  rowProps.style.maxHeight = 'fit-content';
+                  rowProps.style.height = '';
+                }
                 return (
                   <tr
                     key={index}
@@ -1277,7 +1454,7 @@ export function Table({
                         ? 'selected'
                         : ''
                     }`}
-                    {...row.getRowProps()}
+                    {...rowProps}
                     onClick={async (e) => {
                       e.stopPropagation();
                       // toggleRowSelected will triggered useRededcuer function in useTable and in result will get the selectedFlatRows consisting row which are selected
@@ -1330,33 +1507,40 @@ export function Table({
                       ) {
                         cellProps.style.flex = '1 1 auto';
                       }
+                      //should we remove this
                       const wrapAction = textWrapActions(cell.column.id);
                       const rowChangeSet = changeSet ? changeSet[cell.row.index] : null;
                       const cellValue = rowChangeSet ? rowChangeSet[cell.column.name] || cell.value : cell.value;
                       const rowData = tableData[cell.row.index];
-                      const cellBackgroundColor = resolveReferences(
-                        cell.column?.cellBackgroundColor,
-                        currentState,
-                        '',
-                        {
-                          cellValue,
-                          rowData,
-                        }
-                      );
-                      const cellTextColor = resolveReferences(cell.column?.textColor, currentState, '', {
+                      const cellBackgroundColor = ![
+                        'dropdown',
+                        'badge',
+                        'badges',
+                        'tags',
+                        'radio',
+                        'link',
+                        'multiselect',
+                        'toggle',
+                      ].includes(cell?.column?.columnType)
+                        ? resolveReferences(cell.column?.cellBackgroundColor, '', {
+                            cellValue,
+                            rowData,
+                          })
+                        : '';
+                      const cellTextColor = resolveReferences(cell.column?.textColor, '', {
                         cellValue,
                         rowData,
                       });
                       const actionButtonsArray = actions.map((action) => {
                         return {
                           ...action,
-                          isDisabled: resolveReferences(action?.disableActionButton ?? false, currentState, '', {
+                          isDisabled: resolveReferences(action?.disableActionButton ?? false, '', {
                             cellValue,
                             rowData,
                           }),
                         };
                       });
-                      const isEditable = resolveReferences(cell.column?.isEditable ?? false, currentState, '', {
+                      const isEditable = resolveReferences(cell.column?.isEditable ?? false, '', {
                         cellValue,
                         rowData,
                       });
@@ -1369,27 +1553,47 @@ export function Table({
                             cell.column.id === 'rightActions' || cell.column.id === 'leftActions' ? cell.column.id : ''
                           )}${String(cellValue ?? '').toLocaleLowerCase()}-cell-${index}`}
                           className={cx(
-                            `table-text-align-${cell.column.horizontalAlignment} ${
-                              wrapAction ? wrapAction : cell?.column?.Header === 'Actions' ? '' : 'wrap'
-                            }-wrapper td`,
+                            `table-text-align-${cell.column.horizontalAlignment}  
+                            ${cell?.column?.Header !== 'Actions' && (contentWrap ? 'wrap-wrapper' : '')}
+                            td`,
                             {
                               'has-actions': cell.column.id === 'rightActions' || cell.column.id === 'leftActions',
                               'has-left-actions': cell.column.id === 'leftActions',
                               'has-right-actions': cell.column.id === 'rightActions',
                               'has-text': cell.column.columnType === 'text' || isEditable,
+                              'has-number': cell.column.columnType === 'number',
                               'has-dropdown': cell.column.columnType === 'dropdown',
                               'has-multiselect': cell.column.columnType === 'multiselect',
                               'has-datepicker': cell.column.columnType === 'datepicker',
                               'align-items-center flex-column': cell.column.columnType === 'selector',
+                              'has-badge': ['badge', 'badges'].includes(cell.column.columnType),
                               [cellSize]: true,
+                              'overflow-hidden':
+                                ['text', 'string', undefined, 'number'].includes(cell.column.columnType) &&
+                                !contentWrap,
                               'selector-column':
                                 cell.column.columnType === 'selector' && cell.column.id === 'selection',
                               'resizing-column': cell.column.isResizing || cell.column.id === resizingColumnId,
+                              'has-select': ['select', 'newMultiSelect'].includes(cell.column.columnType),
+                              'has-tags': cell.column.columnType === 'tags',
+                              'has-link': cell.column.columnType === 'link',
+                              'has-radio': cell.column.columnType === 'radio',
+                              'has-toggle': cell.column.columnType === 'toggle',
+                              'has-textarea': ['string', 'text'].includes(cell.column.columnType),
+                              isEditable: isEditable,
                             }
                           )}
                           {...cellProps}
                           style={{ ...cellProps.style, backgroundColor: cellBackgroundColor ?? 'inherit' }}
                           onClick={(e) => {
+                            if (
+                              (isEditable || ['rightActions', 'leftActions'].includes(cell.column.id)) &&
+                              allowSelection &&
+                              !selectRowOnCellEdit
+                            ) {
+                              // to avoid on click event getting propagating to row when td is editable or has action button and allowSelection is true and selectRowOnCellEdit is false
+                              e.stopPropagation();
+                            }
                             setExposedVariable('selectedCell', {
                               columnName: cell.column.exportValue,
                               columnKey: cell.column.key,
@@ -1399,7 +1603,7 @@ export function Table({
                         >
                           <div
                             className={`td-container ${
-                              cell.column.columnType === 'image' && 'jet-table-image-column'
+                              cell.column.columnType === 'image' && 'jet-table-image-column h-100'
                             } ${cell.column.columnType !== 'image' && `w-100 h-100`}`}
                           >
                             <GenerateEachCellValue
@@ -1410,6 +1614,10 @@ export function Table({
                                 actionButtonsArray,
                                 isEditable,
                                 horizontalAlignment,
+                                cellTextColor,
+                                contentWrap,
+                                autoHeight,
+                                isMaxRowHeightAuto,
                               })}
                               rowChangeSet={rowChangeSet}
                               isEditable={isEditable}
@@ -1418,6 +1626,10 @@ export function Table({
                               cellTextColor={cellTextColor}
                               cell={cell}
                               currentState={currentState}
+                              cellWidth={cell.column.width}
+                              isCellValueChanged={isCellValueChanged}
+                              setIsCellValueChanged={setIsCellValueChanged}
+                              darkMode={darkMode}
                             />
                           </div>
                         </td>
@@ -1495,7 +1707,8 @@ export function Table({
                       variant="primary"
                       className={`tj-text-xsm`}
                       onClick={() => {
-                        onEvent('onBulkUpdate', { component }).then(() => {
+                        setIsCellValueChanged(false);
+                        onEvent('onBulkUpdate', tableEvents, { component }).then(() => {
                           handleChangesSaved();
                         });
                       }}
@@ -1513,6 +1726,7 @@ export function Table({
                       variant="tertiary"
                       className={`tj-text-xsm`}
                       onClick={() => {
+                        setIsCellValueChanged(false);
                         handleChangesDiscarded();
                       }}
                       data-cy={`table-button-discard-changes`}
@@ -1527,7 +1741,11 @@ export function Table({
                   </>
                 ) : (
                   !loadingState && (
-                    <span data-cy={`footer-number-of-records`} className="font-weight-500 color-slate11">
+                    <span
+                      data-cy={`footer-number-of-records`}
+                      className="font-weight-500"
+                      style={{ color: 'var(--text-placeholder)' }}
+                    >
                       {clientSidePagination && !serverSidePagination && `${globalFilteredRows.length} Records`}
                       {serverSidePagination && totalRecords ? `${totalRecords} Records` : ''}
                     </span>
@@ -1535,15 +1753,7 @@ export function Table({
                 ))}
             </div>
             <div className={`col d-flex justify-content-center h-100 ${loadingState && 'w-100'}`}>
-              {loadingState && (
-                <div className="w-100">
-                  <SkeletonTheme baseColor="var(--slate3)" width="100%">
-                    <Skeleton count={1} width={'100%'} height={28} className="mb-1" />
-                  </SkeletonTheme>
-                </div>
-              )}
-
-              {enablePagination && !loadingState && (
+              {enablePagination && (
                 <Pagination
                   lastActivePageIndex={pageIndex}
                   serverSide={serverSidePagination}
@@ -1558,6 +1768,7 @@ export function Table({
                   enablePrevButton={enablePrevButton}
                   darkMode={darkMode}
                   tableWidth={width}
+                  loadingState={loadingState}
                 />
               )}
             </div>
@@ -1572,7 +1783,7 @@ export function Table({
                   <Tooltip id="tooltip-for-add-new-row" className="tooltip" />
                   <ButtonSolid
                     variant="ghostBlack"
-                    fill={`var(--slate11)`}
+                    fill={`var(--icons-default)`}
                     className={`tj-text-xsm ${
                       tableDetails.addNewRowsDetails.addingNewRows && 'cursor-not-allowed always-active-btn'
                     }`}
@@ -1606,7 +1817,7 @@ export function Table({
                         minWidth: '32px',
                       }}
                       leftIcon="filedownload"
-                      fill={`var(--slate11)`}
+                      fill={`var(--icons-default)`}
                       iconWidth="16"
                       size="md"
                       data-tooltip-id="tooltip-for-download"
@@ -1634,7 +1845,7 @@ export function Table({
                       className={`tj-text-xsm `}
                       customStyles={{ minWidth: '32px' }}
                       leftIcon="eye1"
-                      fill={`var(--slate11)`}
+                      fill={`var(--icons-default)`}
                       iconWidth="16"
                       size="md"
                       data-cy={`select-column-icon`}
@@ -1653,20 +1864,19 @@ export function Table({
           </div>
         </div>
       )}
-      {tableDetails.filterDetails.filtersVisible && (
-        <Filter
-          hideFilters={hideFilters}
-          filters={tableDetails.filterDetails.filters}
-          columns={columnData.map((column) => {
-            return { name: column.Header, value: column.id };
-          })}
-          mergeToFilterDetails={mergeToFilterDetails}
-          filterDetails={tableDetails.filterDetails}
-          darkMode={darkMode}
-          setAllFilters={setAllFilters}
-          fireEvent={fireEvent}
-        />
-      )}
+      <Filter
+        hideFilters={hideFilters}
+        filters={tableDetails.filterDetails.filters}
+        columns={columnData.map((column) => {
+          return { name: column.Header, value: column.id };
+        })}
+        mergeToFilterDetails={mergeToFilterDetails}
+        filterDetails={tableDetails.filterDetails}
+        darkMode={darkMode}
+        setAllFilters={setAllFilters}
+        fireEvent={fireEvent}
+        setExposedVariable={setExposedVariable}
+      />
       {tableDetails.addNewRowsDetails.addingNewRows && (
         <AddNewRowComponent
           hideAddNewRowPopup={hideAddNewRowPopup}
@@ -1681,6 +1891,7 @@ export function Table({
           columns={columnsForAddNewRow}
           addNewRowsDetails={tableDetails.addNewRowsDetails}
           utilityForNestedNewRow={utilityForNestedNewRow}
+          tableEvents={tableEvents}
         />
       )}
     </div>

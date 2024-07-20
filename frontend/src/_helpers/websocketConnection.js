@@ -1,10 +1,18 @@
 import config from 'config';
 
 class WebSocketConnection {
-  constructor(appId) {
-    this.socket = new WebSocket(`${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${this.getWebsocketUrl()}`);
+  static instance;
+  static appId;
 
+  constructor(appId) {
+    if (WebSocketConnection.instance && WebSocketConnection.appId === appId) {
+      return WebSocketConnection.instance;
+    }
+
+    this.socket = new WebSocket(`${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${this.getWebsocketUrl()}`);
     this.addListeners(appId);
+
+    WebSocketConnection.instance = this;
   }
 
   getWebsocketUrl() {
@@ -24,7 +32,7 @@ class WebSocketConnection {
   addListeners(appId) {
     // Connection opened
     this.socket.addEventListener('open', (event) => {
-      console.log('connection established', event);
+      // console.log('connection established', event);
 
       //TODO: verify if the socket functionality is working or not
       this.socket.send(
@@ -39,16 +47,18 @@ class WebSocketConnection {
           data: appId,
         })
       );
+
+      this.appId = appId;
     });
 
     // Connection closed
     this.socket.addEventListener('close', (event) => {
-      console.log('connection closed', event);
+      // console.log('connection closed', event);
     });
 
     // Listen for possible errors
     this.socket.addEventListener('error', (event) => {
-      console.log('WebSocket error: ', event);
+      // console.log('WebSocket error: ', event);
     });
   }
 }

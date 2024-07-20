@@ -4,22 +4,29 @@ import { authenticationService } from '@/_services';
 import { toast } from 'react-hot-toast';
 import Spinner from '@/_ui/Spinner';
 
-export const SignupInfoScreen = function SignupInfoScreen({ email, backtoSignup, name, darkMode }) {
+export const SignupInfoScreen = function SignupInfoScreen({
+  email,
+  backtoSignup,
+  name,
+  darkMode,
+  organizationId,
+  redirectTo,
+}) {
   const [resendBtn, setResetBtn] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [buttonText, setButtonText] = useState('Resend verification mail in 30s');
 
   useEffect(() => {
     let timeLeft = 30;
-    let elem = document.getElementById('resend');
 
     let timerId = resendBtn && setInterval(countdown, 1000);
     function countdown() {
       if (timeLeft == -1) {
         clearTimeout(timerId);
         setResetBtn(false);
-        elem.innerHTML = 'Resend verification mail ';
+        setButtonText('Resend verification mail ');
       } else {
-        elem.innerHTML = 'Resend verification mail in ' + timeLeft + ' s';
+        setButtonText(`Resend verification mail in ${timeLeft} s`);
         timeLeft--;
       }
     }
@@ -30,7 +37,7 @@ export const SignupInfoScreen = function SignupInfoScreen({ email, backtoSignup,
 
     e.preventDefault();
     authenticationService
-      .resendInvite(email)
+      .resendInvite(email, organizationId, redirectTo)
       .then(() => {
         setIsLoading(false);
         setResetBtn(true);
@@ -93,7 +100,7 @@ export const SignupInfoScreen = function SignupInfoScreen({ email, backtoSignup,
               disabled={resendBtn || isLoading}
               data-cy="resend-email-button"
             >
-              Resend verification mail in 30s
+              {buttonText}
             </ButtonSolid>
           )}
           <ButtonSolid

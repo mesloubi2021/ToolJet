@@ -8,18 +8,16 @@ import OAuth from '@/_ui/OAuth';
 import Toggle from '@/_ui/Toggle';
 import OpenApi from '@/_ui/OpenAPI';
 import { Checkbox, CheckboxGroup } from '@/_ui/CheckBox';
-import { CodeHinter } from '@/Editor/CodeBuilder/CodeHinter';
+import CodeHinter from '@/Editor/CodeEditor';
 import GoogleSheets from '@/_components/Googlesheets';
 import Slack from '@/_components/Slack';
 import Zendesk from '@/_components/Zendesk';
+import { ConditionFilter, CondtionSort, MultiColumn } from '@/_components/MultiConditions';
+import Salesforce from '@/_components/Salesforce';
 import ToolJetDbOperations from '@/Editor/QueryManager/QueryEditors/TooljetDatabase/ToolJetDbOperations';
 import { orgEnvironmentVariableService, orgEnvironmentConstantService } from '../_services';
-
 import { find, isEmpty } from 'lodash';
 import { ButtonSolid } from './AppButton';
-import { useCurrentState } from '@/_stores/currentStateStore';
-import { useEditorStore } from '@/_stores/editorStore';
-import { shallow } from 'zustand/shallow';
 
 const DynamicForm = ({
   schema,
@@ -39,16 +37,9 @@ const DynamicForm = ({
 }) => {
   const [computedProps, setComputedProps] = React.useState({});
   const isHorizontalLayout = layout === 'horizontal';
-  const currentState = useCurrentState();
 
   const [workspaceVariables, setWorkspaceVariables] = React.useState([]);
   const [currentOrgEnvironmentConstants, setCurrentOrgEnvironmentConstants] = React.useState([]);
-  const { isEditorActive } = useEditorStore(
-    (state) => ({
-      isEditorActive: state?.isEditorActive,
-    }),
-    shallow
-  );
 
   // if(schema.properties)  todo add empty check
   React.useLayoutEffect(() => {
@@ -108,10 +99,10 @@ const DynamicForm = ({
 
       Object.keys(fields).length > 0 &&
         Object.keys(fields).map((key) => {
-          const { type, encrypted } = fields[key];
-          if ((type === 'password' || encrypted) && !(key in computedProps)) {
+          const { type, encrypted, key: propertyKey } = fields[key];
+          if ((type === 'password' || encrypted) && !(propertyKey in computedProps)) {
             //Editable encrypted fields only if datasource doesn't exists
-            encrpytedFieldsProps[key] = {
+            encrpytedFieldsProps[propertyKey] = {
               disabled: !!selectedDataSource?.id,
             };
           }
@@ -153,6 +144,14 @@ const DynamicForm = ({
         return OpenApi;
       case 'react-component-zendesk':
         return Zendesk;
+      case 'columns':
+        return MultiColumn;
+      case 'filters':
+        return ConditionFilter;
+      case 'sorts':
+        return CondtionSort;
+      case 'react-component-salesforce':
+        return Salesforce;
       default:
         return <div>Type is invalid</div>;
     }
@@ -182,6 +181,10 @@ const DynamicForm = ({
     ignoreBraces = false,
     className,
     controller,
+    encrypted,
+    editorType = 'basic',
+    placeholders = {},
+    disabled = false,
   }) => {
     const source = schema?.source?.kind;
     const darkMode = localStorage.getItem('darkMode') === 'true';
@@ -191,12 +194,14 @@ const DynamicForm = ({
     switch (type) {
       case 'password':
       case 'text':
-      case 'textarea':
+      case 'textarea': {
+        const useEncrypted =
+          (options?.[key]?.encrypted !== undefined ? options?.[key].encrypted : encrypted) || type === 'password';
         return {
           type,
-          placeholder: options?.[key]?.encrypted ? '**************' : description,
+          placeholder: useEncrypted ? '**************' : description,
           className: `form-control${handleToggle(controller)}`,
-          value: options?.[key]?.value,
+          value: options?.[key]?.value || '',
           ...(type === 'textarea' && { rows: rows }),
           ...(helpText && { helpText }),
           onChange: (e) => optionchanged(key, e.target.value, true), //shouldNotAutoSave is true because autosave should occur during onBlur, not after each character change (in optionchanged).
@@ -204,7 +209,9 @@ const DynamicForm = ({
           isGDS,
           workspaceVariables,
           workspaceConstants: currentOrgEnvironmentConstants,
+          encrypted: useEncrypted,
         };
+      }
       case 'toggle':
         return {
           defaultChecked: options?.[key],
@@ -221,6 +228,7 @@ const DynamicForm = ({
           useMenuPortal: queryName ? true : false,
           styles: computeSelectStyles ? computeSelectStyles('100%') : {},
           useCustomStyles: computeSelectStyles ? true : false,
+          encrypted: options?.[key]?.encrypted,
         };
 
       case 'checkbox-group':
@@ -234,10 +242,10 @@ const DynamicForm = ({
 
       case 'react-component-headers': {
         let isRenderedAsQueryEditor;
-        if (!isEditorActive || isGDS) {
+        if (isGDS) {
           isRenderedAsQueryEditor = false;
         } else {
-          isRenderedAsQueryEditor = !isGDS && currentState != null;
+          isRenderedAsQueryEditor = !isGDS;
         }
         return {
           getter: key,
@@ -245,9 +253,9 @@ const DynamicForm = ({
             ? options?.[key] ?? schema?.defaults?.[key]
             : options?.[key]?.value ?? schema?.defaults?.[key]?.value,
           optionchanged,
-          currentState,
           isRenderedAsQueryEditor,
           workspaceConstants: currentOrgEnvironmentConstants,
+          encrypted: options?.[key]?.encrypted,
         };
       }
       case 'react-component-oauth-authentication':
@@ -275,10 +283,14 @@ const DynamicForm = ({
           multiple_auth_enabled: options?.multiple_auth_enabled?.value,
           optionchanged,
           workspaceConstants: currentOrgEnvironmentConstants,
+          options,
+          optionsChanged,
+          selectedDataSource,
         };
       case 'react-component-google-sheets':
       case 'react-component-slack':
       case 'react-component-zendesk':
+      case 'react-component-salesforce':
         return {
           optionchanged,
           createDataSource,
@@ -286,10 +298,10 @@ const DynamicForm = ({
           isSaving,
           selectedDataSource,
           workspaceConstants: currentOrgEnvironmentConstants,
+          optionsChanged,
         };
       case 'tooljetdb-operations':
         return {
-          currentState,
           optionchanged,
           createDataSource,
           options,
@@ -299,23 +311,23 @@ const DynamicForm = ({
         };
       case 'codehinter':
         return {
-          currentState,
+          type: editorType,
           initialValue: options[key]
             ? typeof options[key] === 'string'
               ? options[key]
               : JSON.stringify(options[key])
             : initialValue,
-          mode,
+          lang: mode,
           lineNumbers,
           className: className ? className : lineNumbers ? 'query-hinter' : 'codehinter-query-editor-input',
           onChange: (value) => optionchanged(key, value),
-          theme: darkMode ? 'monokai' : lineNumbers ? 'duotone-light' : 'default',
           placeholder,
           height,
           width,
           componentName: queryName ? `${queryName}::${key ?? ''}` : null,
-          ignoreBraces,
           cyLabel: key ? `${String(key).toLocaleLowerCase().replace(/\s+/g, '-')}` : '',
+          disabled,
+          delayOnChange: false,
         };
       case 'react-component-openapi-validator':
         return {
@@ -343,6 +355,26 @@ const DynamicForm = ({
           spec: options.spec?.value,
           workspaceConstants: currentOrgEnvironmentConstants,
         };
+      case 'filters':
+        return {
+          operators: list || [],
+          value: options?.[key] ?? {},
+          onChange: (value) => optionchanged(key, value),
+          placeholders,
+        };
+      case 'sorts':
+        return {
+          orders: list || [],
+          value: options?.[key] ?? {},
+          onChange: (value) => optionchanged(key, value),
+          placeholders,
+        };
+      case 'columns':
+        return {
+          value: options?.[key] ?? {},
+          onChange: (value) => optionchanged(key, value),
+          placeholders,
+        };
       default:
         return {};
     }
@@ -364,7 +396,12 @@ const DynamicForm = ({
         //Send old field value if editing mode disabled for encrypted fields
         const newOptions = { ...options };
         const oldFieldValue = selectedDataSource?.['options']?.[field];
-        optionsChanged({ ...newOptions, [field]: oldFieldValue });
+        if (oldFieldValue) {
+          optionsChanged({ ...newOptions, [field]: oldFieldValue });
+        } else {
+          delete newOptions[field];
+          optionsChanged({ ...newOptions });
+        }
       }
       setComputedProps({
         ...computedProps,
@@ -378,7 +415,7 @@ const DynamicForm = ({
     return (
       <div className={`${isHorizontalLayout ? '' : 'row'}`}>
         {Object.keys(obj).map((key) => {
-          const { label, type, encrypted, className } = obj[key];
+          const { label, type, encrypted, className, key: propertyKey } = obj[key];
           const Element = getElement(type);
           const isSpecificComponent = ['tooljetdb-operations'].includes(type);
 
@@ -415,9 +452,9 @@ const DynamicForm = ({
                         variant="tertiary"
                         target="_blank"
                         rel="noreferrer"
-                        onClick={(event) => handleEncryptedFieldsToggle(event, key)}
+                        onClick={(event) => handleEncryptedFieldsToggle(event, propertyKey)}
                       >
-                        {computedProps?.[key]?.['disabled'] ? 'Edit' : 'Cancel'}
+                        {computedProps?.[propertyKey]?.['disabled'] ? 'Edit' : 'Cancel'}
                       </ButtonSolid>
                     </div>
                   )}
@@ -441,10 +478,11 @@ const DynamicForm = ({
                   'flex-grow-1': isHorizontalLayout && !isSpecificComponent,
                   'w-100': isHorizontalLayout && type !== 'codehinter',
                 })}
+                style={{ width: '100%' }}
               >
                 <Element
                   {...getElementProps(obj[key])}
-                  {...computedProps[key]}
+                  {...computedProps[propertyKey]}
                   data-cy={`${String(label).toLocaleLowerCase().replace(/\s+/g, '-')}-text-field`}
                   //to be removed after whole ui is same
                   isHorizontalLayout={isHorizontalLayout}

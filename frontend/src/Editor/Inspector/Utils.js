@@ -17,6 +17,97 @@ export function renderQuerySelector(component, dataQueries, eventOptionUpdated, 
     />
   );
 }
+export function renderCustomStyles(
+  component,
+  componentMeta,
+  paramUpdated,
+  dataQueries,
+  param,
+  paramType,
+  currentState,
+  components = {},
+  accordian,
+  darkMode = false,
+  placeholder = ''
+) {
+  const componentConfig = component.component;
+  const componentDefinition = componentConfig.definition;
+  const paramTypeDefinition = componentDefinition[paramType] || {};
+  const definition = paramTypeDefinition[param] || {};
+  const meta = componentMeta[paramType]?.[accordian]?.[param];
+
+  if (
+    componentConfig.component == 'DropDown' ||
+    componentConfig.component == 'Form' ||
+    componentConfig.component == 'Listview' ||
+    componentConfig.component == 'TextInput' ||
+    componentConfig.component == 'NumberInput' ||
+    componentConfig.component == 'PasswordInput' ||
+    componentConfig.component == 'ToggleSwitchV2' ||
+    componentConfig.component == 'Checkbox' ||
+    componentConfig.component == 'Button' ||
+    componentConfig.component == 'Table'
+  ) {
+    const paramTypeConfig = componentMeta[paramType] || {};
+    const paramConfig = paramTypeConfig[param] || {};
+    const { conditionallyRender = null } = paramConfig;
+
+    const getResolvedValue = (key) => {
+      return paramTypeDefinition?.[key] && resolveReferences(paramTypeDefinition?.[key]);
+    };
+
+    const utilFuncForMultipleChecks = (conditionallyRender) => {
+      return conditionallyRender.reduce((acc, condition) => {
+        const { key, value } = condition;
+        if (paramTypeDefinition?.[key] ?? value) {
+          const resolvedValue = getResolvedValue(key);
+          acc.push(resolvedValue?.value !== value);
+        }
+        return acc;
+      }, []);
+    };
+
+    if (conditionallyRender) {
+      const isConditionallyRenderArray = Array.isArray(conditionallyRender);
+
+      if (isConditionallyRenderArray && utilFuncForMultipleChecks(conditionallyRender).includes(true)) {
+        return;
+      } else {
+        const { key, value } = conditionallyRender;
+        if (paramTypeDefinition?.[key] ?? value) {
+          const resolvedValue = getResolvedValue(key);
+          if (resolvedValue?.value !== value) {
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  return (
+    <>
+      <Code
+        param={{ name: param, ...component.component.properties[param] }}
+        definition={definition}
+        dataQueries={dataQueries}
+        onChange={paramUpdated}
+        paramType={paramType}
+        components={components}
+        componentMeta={componentMeta}
+        darkMode={darkMode}
+        componentName={component.component.name || null}
+        type={meta?.type}
+        fxActive={definition.fxActive ?? false}
+        onFxPress={(active) => {
+          paramUpdated({ name: param, ...component.component.properties[param] }, 'fxActive', active, paramType);
+        }}
+        component={component}
+        accordian={accordian}
+        placeholder={placeholder}
+      />
+    </>
+  );
+}
 
 export function renderElement(
   component,
@@ -28,7 +119,7 @@ export function renderElement(
   currentState,
   components = {},
   darkMode = false,
-  verticalLine = true
+  placeholder = ''
 ) {
   const componentConfig = component.component;
   const componentDefinition = componentConfig.definition;
@@ -48,7 +139,7 @@ export function renderElement(
     if (conditionallyRender) {
       const { key, value } = conditionallyRender;
       if (paramTypeDefinition?.[key] ?? value) {
-        const resolvedValue = paramTypeDefinition?.[key] && resolveReferences(paramTypeDefinition?.[key], currentState);
+        const resolvedValue = paramTypeDefinition?.[key] && resolveReferences(paramTypeDefinition?.[key]);
         if (resolvedValue?.value !== value) return;
       }
     }
@@ -65,13 +156,13 @@ export function renderElement(
       componentMeta={componentMeta}
       darkMode={darkMode}
       componentName={component.component.name || null}
-      type={meta.type}
+      type={meta?.type}
       fxActive={definition.fxActive ?? false}
       onFxPress={(active) => {
         paramUpdated({ name: param, ...component.component.properties[param] }, 'fxActive', active, paramType);
       }}
       component={component}
-      verticalLine={verticalLine}
+      placeholder={placeholder}
     />
   );
 }

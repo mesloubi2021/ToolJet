@@ -2,14 +2,14 @@ import React, { useContext } from 'react';
 import { Col, Container, Row } from 'react-bootstrap';
 import { TooljetDatabaseContext } from '@/TooljetDatabase/index';
 import DropDownSelect from './DropDownSelect';
-import { cloneDeep } from 'lodash';
 import SolidIcon from '@/_ui/Icon/SolidIcons';
+import { deepClone } from '@/_helpers/utilities/utils.helpers';
 
 export default function JoinSelect({ darkMode }) {
   const { joinOptions, tableInfo, joinTableOptions, joinTableOptionsChange, findTableDetails } =
     useContext(TooljetDatabaseContext);
 
-  const joinSelectOptions = cloneDeep(joinTableOptions['fields']) || [];
+  const joinSelectOptions = deepClone(joinTableOptions['fields']) || [];
   const setJoinSelectOptions = (fields) => {
     joinTableOptionsChange('fields', fields);
   };
@@ -90,12 +90,22 @@ export default function JoinSelect({ darkMode }) {
           const respectiveTableSelectedOptions = joinSelectOptions.filter((val) => val?.table === table);
           const respectiveTableOptions = tableOptions[table] ?? [];
           return (
-            <Row key={table} className="border rounded mb-2 mx-0">
-              <Col sm="3" className="p-0 border-end">
-                <div className="tj-small-btn px-2">{findTableDetails(table)?.table_name ?? ''}</div>
+            <Row key={table} className="mb-2 mx-0">
+              <Col sm="3" className="p-0">
+                <div
+                  style={{
+                    height: '30px',
+                    borderRadius: 0,
+                  }}
+                  className="tj-small-btn px-2 border border-end-0 rounded-start"
+                >
+                  {findTableDetails(table)?.table_name ?? ''}
+                </div>
               </Col>
-              <Col sm="9" className="p-0 border-end">
+              <Col sm="9" className="p-0">
                 <DropDownSelect
+                  buttonClasses="border rounded-end"
+                  highlightSelected={false}
                   showPlaceHolder
                   options={[
                     { label: 'Select All', value: 'SELECT ALL' },

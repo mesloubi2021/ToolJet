@@ -1,35 +1,28 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import cx from 'classnames';
 import { QueryManagerHeader } from './Components/QueryManagerHeader';
 import { QueryManagerBody } from './Components/QueryManagerBody';
 import { runQuery } from '@/_helpers/appUtils';
 import { defaultSources } from './constants';
-
-import { useQueryCreationLoading, useQueryUpdationLoading } from '@/_stores/dataQueriesStore';
-import { useDataSources, useGlobalDataSources, useLoadingDataSources } from '@/_stores/dataSourcesStore';
+import {
+  useDataSources,
+  useGlobalDataSources,
+  useLoadingDataSources,
+  useSampleDataSource,
+} from '@/_stores/dataSourcesStore';
 import { useQueryToBeRun, useSelectedQuery, useQueryPanelActions } from '@/_stores/queryPanelStore';
+import { CodeHinterContext } from '@/Editor/CodeBuilder/CodeHinterContext';
+import { resolveReferences } from '@/_helpers/utils';
 
-const QueryManager = ({ mode, dataQueriesChanged, appId, darkMode, apps, allComponents, appDefinition, editorRef }) => {
+const QueryManager = ({ mode, appId, darkMode, apps, allComponents, appDefinition, editorRef }) => {
   const loadingDataSources = useLoadingDataSources();
   const dataSources = useDataSources();
+  const sampleDataSource = useSampleDataSource();
   const globalDataSources = useGlobalDataSources();
   const queryToBeRun = useQueryToBeRun();
-  const isCreationInProcess = useQueryCreationLoading();
-  const isUpdationInProcess = useQueryUpdationLoading();
   const selectedQuery = useSelectedQuery();
   const { setSelectedDataSource, setQueryToBeRun } = useQueryPanelActions();
-
   const [options, setOptions] = useState({});
-  const mounted = useRef(false);
-
-  /** TODO: Below effect primarily used only for websocket invocation post update. Can be removed onece websocket logic is revamped */
-  useEffect(() => {
-    if (mounted.current && !isCreationInProcess && !isUpdationInProcess) {
-      return dataQueriesChanged();
-    }
-    mounted.current = true;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCreationInProcess, isUpdationInProcess, mounted.current]);
 
   useEffect(() => {
     setOptions(selectedQuery?.options || {});
@@ -45,9 +38,9 @@ const QueryManager = ({ mode, dataQueriesChanged, appId, darkMode, apps, allComp
 
   useEffect(() => {
     if (selectedQuery) {
-      const selectedDS = [...dataSources, ...globalDataSources].find(
-        (datasource) => datasource.id === selectedQuery?.data_source_id
-      );
+      const selectedDS = [...dataSources, ...globalDataSources, !!sampleDataSource && sampleDataSource]
+        .filter(Boolean)
+        .find((datasource) => datasource.id === selectedQuery?.data_source_id);
       //TODO: currently type is not taken into account. May create issues in importing REST apis. to be revamped when import app is revamped
       if (
         selectedQuery?.kind in defaultSources &&
@@ -67,16 +60,34 @@ const QueryManager = ({ mode, dataQueriesChanged, appId, darkMode, apps, allComp
         'd-none': loadingDataSources,
       })}
     >
-      <QueryManagerHeader darkMode={darkMode} options={options} editorRef={editorRef} appId={appId} />
-      <QueryManagerBody
+      <QueryManagerHeader
         darkMode={darkMode}
         options={options}
-        allComponents={allComponents}
-        apps={apps}
+        editorRef={editorRef}
         appId={appId}
-        appDefinition={appDefinition}
         setOptions={setOptions}
       />
+      <CodeHinterContext.Provider
+        value={{
+          parameters: selectedQuery?.options?.parameters?.reduce(
+            (parameters, parameter) => ({
+              ...parameters,
+              [parameter.name]: resolveReferences(parameter.defaultValue, undefined),
+            }),
+            {}
+          ),
+        }}
+      >
+        <QueryManagerBody
+          darkMode={darkMode}
+          options={options}
+          allComponents={allComponents}
+          apps={apps}
+          appId={appId}
+          appDefinition={appDefinition}
+          setOptions={setOptions}
+        />
+      </CodeHinterContext.Provider>
     </div>
   );
 };

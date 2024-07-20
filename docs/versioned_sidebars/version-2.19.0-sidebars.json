@@ -10,6 +10,7 @@
       },
       "items": [
         "setup/try-tooljet",
+        "setup/choose-your-tooljet",
         "setup/digitalocean",
         "setup/docker",
         "setup/ec2",
@@ -260,7 +261,8 @@
                     "user-authentication/sso/openid/google-openid"
                   ]
                 },
-                "user-authentication/sso/ldap"
+                "user-authentication/sso/ldap",
+                "user-authentication/sso/saml"
               ]
             }
           ]
@@ -350,7 +352,8 @@
         "how-to/s3-custom-endpoints",
         "how-to/upload-files-aws",
         "how-to/upload-files-gcs",
-        "how-to/loading-image-pdf-from-db"
+        "how-to/loading-image-pdf-from-db",
+        "how-to/print-multi-tabs-report"
       ]
     },
     {
@@ -372,6 +375,7 @@
           "type": "category",
           "label": "Setup",
           "items": [
+            "contributing-guide/setup/codespaces",
             "contributing-guide/setup/macos",
             "contributing-guide/setup/docker",
             "contributing-guide/setup/ubuntu",

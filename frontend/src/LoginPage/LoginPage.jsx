@@ -2,17 +2,7 @@ import React from 'react';
 import { authenticationService } from '@/_services';
 import { toast } from 'react-hot-toast';
 import { Link, Navigate } from 'react-router-dom';
-import queryString from 'query-string';
-import GoogleSSOLoginButton from '@ee/components/LoginPage/GoogleSSOLoginButton';
-import GitSSOLoginButton from '@ee/components/LoginPage/GitSSOLoginButton';
-import {
-  getSubpath,
-  redirectToWorkspace,
-  validateEmail,
-  eraseRedirectUrl,
-  returnWorkspaceIdIfNeed,
-} from '@/_helpers/utils';
-import { ShowLoading } from '@/_components';
+import { validateEmail } from '@/_helpers/utils';
 import { withTranslation } from 'react-i18next';
 import OnboardingNavbar from '@/_components/OnboardingNavbar';
 import { ButtonSolid } from '@/_components/AppButton';
@@ -20,32 +10,57 @@ import EnterIcon from '../../assets/images/onboardingassets/Icons/Enter';
 import EyeHide from '../../assets/images/onboardingassets/Icons/EyeHide';
 import EyeShow from '../../assets/images/onboardingassets/Icons/EyeShow';
 import Spinner from '@/_ui/Spinner';
-import { setCookie } from '@/_helpers/cookie';
 import { withRouter } from '@/_hoc/withRouter';
+import { redirectToDashboard, getRedirectTo } from '@/_helpers/routes';
+import { setCookie } from '@/_helpers/cookie';
+import { onLoginSuccess } from '@/_helpers/platform/utils/auth.utils';
+import { updateCurrentSession } from '@/_helpers/authorizeWorkspace';
+import cx from 'classnames';
+import SSOLoginModule from './SSOLoginModule';
+import { retrieveWhiteLabelText } from '@white-label/whiteLabelling';
+
 class LoginPageComponent extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
       isLoading: false,
       showPassword: false,
-      isGettingConfigs: true,
-      configs: undefined,
       emailError: false,
-      navigateToLogin: false,
-      current_organization_name: null,
+      redirectTo: null,
     };
-    this.organizationId = props.params.organizationId;
+    this.organizationId = props.organizationId;
+    this.paramOrganizationSlug = props?.params?.organizationId;
   }
   darkMode = localStorage.getItem('darkMode') === 'true';
+  whiteLabelText = retrieveWhiteLabelText();
 
   componentDidMount() {
+    /* remove login oranization's id and slug from the cookie */
+    this.setRedirectUrlToCookie();
+
+    this.props.location?.state?.errorMessage &&
+      toast.error(this.props.location.state.errorMessage, {
+        id: 'toast-login-auth-error',
+        position: 'top-center',
+      });
+  }
+
+  handleChange = (event) => {
+    this.setState({ [event.target.name]: event.target.value, emailError: '' });
+  };
+
+  handleOnCheck = () => {
+    this.setState((prev) => ({ showPassword: !prev.showPassword }));
+  };
+
+  setRedirectUrlToCookie() {
     // Page is loaded inside an iframe
-    const appInsideIframe = window !== window.top;
+    const iframe = window !== window.top;
+    const redirectPath = getRedirectTo(
+      iframe ? new URL(window.location.href).searchParams : new URL(location.href).searchParams
+    );
 
-    if (appInsideIframe) {
-      const params = new URL(window.location.href).searchParams;
-
-      const redirectPath = params.get('redirectTo') || '/';
+    if (iframe) {
       window.parent.postMessage(
         {
           type: 'redirectTo',
@@ -57,101 +72,18 @@ class LoginPageComponent extends React.Component {
       );
     }
 
-    this.setRedirectUrlToCookie(appInsideIframe);
-
-    authenticationService.deleteLoginOrganizationId();
-    this.currentSessionObservable = authenticationService.currentSession.subscribe((newSession) => {
-      if (newSession?.current_organization_name)
-        this.setState({ current_organization_name: newSession.current_organization_name });
-      if (newSession?.group_permissions || newSession?.id) {
-        if (
-          (!this.organizationId && newSession?.current_organization_id) ||
-          (this.organizationId && newSession?.current_organization_id === this.organizationId)
-        ) {
-          // redirect to home if already logged in
-          redirectToWorkspace();
-        }
-      }
-    });
-
-    if (this.organizationId) {
-      authenticationService.saveLoginOrganizationId(this.organizationId);
-    }
-
-    authenticationService.getOrganizationConfigs(this.organizationId).then(
-      (configs) => {
-        this.setState({ isGettingConfigs: false, configs });
-      },
-      (response) => {
-        if (response.data.statusCode !== 404 && response.data.statusCode !== 422) {
-          return this.props.navigate({
-            pathname: '/',
-            state: { errorMessage: 'Error while login, please try again' },
-          });
-        }
-
-        // If there is no organization found for single organization setup
-        // show form to sign up
-        // redirected here for self hosted version
-        response.data.statusCode !== 422 && this.props.navigate('/setup');
-
-        // if wrong workspace id then show workspace-switching page
-        if (response.data.statusCode === 422) {
-          authenticationService
-            .validateSession()
-            .then(({ current_organization_id }) => {
-              authenticationService.updateCurrentSession({
-                current_organization_id,
-              });
-              this.props.history.push('/switch-workspace');
-            })
-            .catch(() => {
-              window.location = '/login';
-            });
-        }
-
-        this.setState({
-          isGettingConfigs: false,
-          configs: {
-            form: {
-              enable_sign_up: true,
-              enabled: true,
-            },
-          },
-        });
-      }
-    );
-
-    this.props.location?.state?.errorMessage &&
-      toast.error(this.props.location.state.errorMessage, {
-        id: 'toast-login-auth-error',
-        position: 'top-center',
-      });
-  }
-
-  componentWillUnmount() {
-    this.currentSessionObservable && this.currentSessionObservable.unsubscribe();
-  }
-
-  handleChange = (event) => {
-    this.setState({ [event.target.name]: event.target.value, emailError: '' });
-  };
-
-  handleOnCheck = () => {
-    this.setState((prev) => ({ showPassword: !prev.showPassword }));
-  };
-
-  setRedirectUrlToCookie(iframe) {
-    const params = iframe ? new URL(window.location.href).searchParams : new URL(location.href).searchParams;
-    const redirectPath = params.get('redirectTo');
-
+    authenticationService.saveLoginOrganizationId(this.organizationId);
+    authenticationService.saveLoginOrganizationSlug(this.paramOrganizationSlug);
     redirectPath && setCookie('redirectPath', redirectPath, iframe);
+    this.setState({
+      redirectTo: redirectPath,
+    });
   }
 
   authUser = (e) => {
     e.preventDefault();
 
-    this.setState({ isLoading: true });
+    this.setState({ isLoading: true, formLogin: true });
 
     const { email, password } = this.state;
 
@@ -174,17 +106,11 @@ class LoginPageComponent extends React.Component {
       .then(this.authSuccessHandler, this.authFailureHandler);
   };
 
-  authSuccessHandler = () => {
-    authenticationService.deleteLoginOrganizationId();
-    const params = queryString.parse(this.props.location.search);
-    const { from } = params.redirectTo ? { from: { pathname: params.redirectTo } } : { from: { pathname: '/' } };
-    if (from.pathname !== '/confirm')
-      // appending workspace-id to avoid 401 error. App.jsx will take the workspace id from URL
-      from.pathname = `${returnWorkspaceIdIfNeed(from.pathname)}${from.pathname !== '/' ? from.pathname : ''}`;
-    const redirectPath = from.pathname === '/confirm' ? '/' : from.pathname;
-    this.setState({ isLoading: false });
-    eraseRedirectUrl();
-    window.location = getSubpath() ? `${getSubpath()}${redirectPath}` : redirectPath;
+  authSuccessHandler = (user) => {
+    updateCurrentSession({
+      isUserLoggingIn: true,
+    });
+    onLoginSuccess(user, this.props.navigate);
   };
 
   authFailureHandler = (res) => {
@@ -195,35 +121,38 @@ class LoginPageComponent extends React.Component {
     this.setState({ isLoading: false });
   };
 
-  redirectToUrl = () => {
-    const redirectPath = eraseRedirectUrl();
-    return redirectPath ? redirectPath : '/';
-  };
-
   render() {
-    const { isLoading, configs, isGettingConfigs, navigateToLogin } = this.state;
+    const { configs, currentOrganizationName } = this.props;
+    const { isLoading, redirectTo } = this.state;
+    const shouldShowLoginMethods = configs?.google?.enabled || configs?.git?.enabled || configs?.form?.enabled;
+    const noLoginMethodsEnabled = !configs?.form && !configs?.git && !configs?.google;
+    const workspaceSignUpEnabled = this.organizationId && configs?.enable_sign_up;
+    const instanceSignUpEnabled = !this.organizationId && (configs?.form?.enable_sign_up || configs?.enable_sign_up);
+    const isSignUpCTAEnabled = workspaceSignUpEnabled || instanceSignUpEnabled;
+    const signUpCTA = workspaceSignUpEnabled ? 'Sign up' : 'Create an account';
+    const signupText = workspaceSignUpEnabled
+      ? this.props.t('loginSignupPage.newToWorkspace', `New to this workspace?`)
+      : this.props.t('loginSignupPage.newToTooljet', ` New to ${this.whiteLabelText}?`, {
+          whiteLabelText: this.whiteLabelText,
+        });
+    const signUpUrl = `/signup${this.paramOrganizationSlug ? `/${this.paramOrganizationSlug}` : ''}${
+      redirectTo ? `?redirectTo=${redirectTo}` : ''
+    }`;
+
     return (
       <>
-        {navigateToLogin ? (
-          <Navigate to={this.redirectToUrl()} />
-        ) : (
-          <div className="common-auth-section-whole-wrapper page">
-            <div className="common-auth-section-left-wrapper">
-              <OnboardingNavbar darkMode={this.darkMode} />
-              <div className="common-auth-section-left-wrapper-grid">
-                {this.state.isGettingConfigs && (
-                  <div className="loader-wrapper">
-                    <ShowLoading />
-                  </div>
-                )}
-                <form action="." method="get" autoComplete="off">
-                  {isGettingConfigs ? (
-                    <div className="loader-wrapper">
-                      <ShowLoading />
-                    </div>
+        <div className="common-auth-section-whole-wrapper page">
+          <div className="common-auth-section-left-wrapper">
+            <OnboardingNavbar darkMode={this.darkMode} />
+            <div className="common-auth-section-left-wrapper-grid">
+              <form action="." method="get" autoComplete="off">
+                {
+                  /* If the configs don't have any organization id. that means the workspace slug is invalid */
+                  this.paramOrganizationSlug && !configs?.id ? (
+                    <Navigate to="/error/invalid-link" />
                   ) : (
                     <div className="common-auth-container-wrapper ">
-                      {!configs?.form && !configs?.git && !configs?.google && (
+                      {noLoginMethodsEnabled && (
                         <div className="text-center-onboard">
                           <h2 data-cy="no-login-methods-warning">
                             {this.props.t(
@@ -234,61 +163,58 @@ class LoginPageComponent extends React.Component {
                         </div>
                       )}
                       <div>
-                        {(this.state?.configs?.google?.enabled ||
-                          this.state?.configs?.git?.enabled ||
-                          configs?.form?.enabled) && (
+                        {shouldShowLoginMethods && (
                           <>
                             <h2 className="common-auth-section-header sign-in-header" data-cy="sign-in-header">
                               {this.props.t('loginSignupPage.signIn', `Sign in`)}
                             </h2>
                             {this.organizationId && (
                               <p
-                                className="text-center-onboard workspace-login-description"
+                                className={cx('text-center-onboard workspace-login-description', {
+                                  'change-margin': workspaceSignUpEnabled,
+                                })}
                                 data-cy="workspace-sign-in-sub-header"
                               >
                                 Sign in to your workspace - {configs?.name}
                               </p>
                             )}
                             <div className="tj-text-input-label">
-                              {!this.organizationId && (configs?.form?.enable_sign_up || configs?.enable_sign_up) && (
-                                <div className="common-auth-sub-header sign-in-sub-header" data-cy="sign-in-sub-header">
-                                  {this.props.t('newToTooljet', 'New to ToolJet?')}
+                              {isSignUpCTAEnabled && (
+                                <div
+                                  className={cx('common-auth-sub-header sign-in-sub-header', {
+                                    'change-margin': workspaceSignUpEnabled,
+                                  })}
+                                  data-cy="sign-in-sub-header"
+                                >
+                                  {this.props.t('newToTooljet', signupText)}
                                   <Link
-                                    to={'/signup'}
+                                    to={signUpUrl}
                                     tabIndex="-1"
                                     style={{ marginLeft: '4px' }}
                                     data-cy="create-an-account-link"
                                   >
-                                    {this.props.t('loginSignupPage.createToolJetAccount', `Create an account`)}
+                                    {this.props.t('createToolJetAccount', signUpCTA)}
                                   </Link>
                                 </div>
                               )}
                             </div>
                           </>
                         )}
-                        {this.state?.configs?.git?.enabled && (
-                          <div className="login-sso-wrapper">
-                            <GitSSOLoginButton configs={this.state?.configs?.git?.configs} />
-                          </div>
-                        )}
-                        {this.state?.configs?.google?.enabled && (
-                          <div className="login-sso-wrapper">
-                            <GoogleSSOLoginButton
-                              configs={this.state?.configs?.google?.configs}
-                              configId={this.state?.configs?.google?.config_id}
-                            />
-                          </div>
-                        )}
-                        {(this.state?.configs?.google?.enabled || this.state?.configs?.git?.enabled) &&
-                          configs?.form?.enabled && (
-                            <div className="separator-onboarding ">
-                              <div className="mt-2 separator" data-cy="onboarding-separator">
-                                <h2>
-                                  <span>OR</span>
-                                </h2>
-                              </div>
+                        <SSOLoginModule
+                          configs={configs}
+                          organizationSlug={this.paramOrganizationSlug}
+                          setRedirectUrlToCookie={() => this.setRedirectUrlToCookie()}
+                          buttonText={'Sign in with'}
+                        />
+                        {(configs?.google?.enabled || configs?.git?.enabled) && configs?.form?.enabled && (
+                          <div className="separator-onboarding ">
+                            <div className="mt-2 separator" data-cy="onboarding-separator">
+                              <h2>
+                                <span>OR</span>
+                              </h2>
                             </div>
-                          )}
+                          </div>
+                        )}
                         {configs?.form?.enabled && (
                           <>
                             <div className="signin-email-wrap">
@@ -406,33 +332,22 @@ class LoginPageComponent extends React.Component {
                             )}
                           </ButtonSolid>
                         )}
-                        {this.state.current_organization_name && this.organizationId && (
+                        {currentOrganizationName && this.organizationId && (
                           <div
                             className="text-center-onboard mt-3"
-                            data-cy={`back-to-${String(this.state.current_organization_name)
-                              .toLowerCase()
-                              .replace(/\s+/g, '-')}`}
+                            data-cy={`back-to-${String(currentOrganizationName).toLowerCase().replace(/\s+/g, '-')}`}
                           >
-                            back to&nbsp;{' '}
-                            <Link
-                              onClick={() =>
-                                (window.location = `${getSubpath() ? getSubpath() : ''}/${
-                                  authenticationService.currentSessionValue?.current_organization_id
-                                }`)
-                              }
-                            >
-                              {this.state.current_organization_name}
-                            </Link>
+                            back to&nbsp; <Link onClick={() => redirectToDashboard()}>{currentOrganizationName}</Link>
                           </div>
                         )}
                       </div>
                     </div>
-                  )}
-                </form>
-              </div>
+                  )
+                }
+              </form>
             </div>
           </div>
-        )}
+        </div>
       </>
     );
   }

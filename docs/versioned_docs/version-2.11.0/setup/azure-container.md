@@ -30,7 +30,7 @@ Please note that you need to set up a PostgreSQL database manually to be used by
 3. In the container tab, uncheck the "Use quickstart image" option to select the image source manually.
  <div style={{textAlign: 'center'}}>
  
- <img className="screenshot-full" src="/img/setup/azure-container/step3.png" alt="Deploying ToolJet on Azure container apps" />
+ <img className="screenshot-full" src="/img/setup/azure-container/step3-v2.png" alt="Deploying ToolJet on Azure container apps" />
  
  </div>
  
@@ -38,7 +38,7 @@ Please note that you need to set up a PostgreSQL database manually to be used by
   - Add the following ToolJet application variables under the "Environmental variable" section. You can refer to this [**documentation**](/docs/setup/env-vars) for more information on environment variables.
    <div style={{textAlign: 'center'}}>
  
-   <img className="screenshot-full" src="/img/setup/azure-container/step4.png" alt="Deploying ToolJet on Azure container apps" />
+   <img className="screenshot-full" src="/img/setup/azure-container/step4-v2.png" alt="Deploying ToolJet on Azure container apps" />
 
    </div>
 
@@ -65,3 +65,19 @@ Please note that you need to set up a PostgreSQL database manually to be used by
  </div>
 
 You can access ToolJet via the application URL provided in the overview tab.
+
+## Upgrading to the Latest Version
+
+The latest version includes architectural changes and, hence, comes with new migrations.
+
+If this is a new installation of the application, you may start directly with the latest version. This guide is not required for new installations.
+
+#### Prerequisites for Upgrading to the Latest Version:
+
+- It is **crucial to perform a comprehensive backup of your database** before starting the upgrade process to prevent data loss.
+
+- Ensure that your current version is v2.23.0-ee2.10.2 before upgrading. 
+
+- Users on versions earlier than v2.23.0-ee2.10.2 must first upgrade to this version before proceeding to the latest version.
+
+For specific issues or questions, refer to our **[Slack](https://tooljet.slack.com/join/shared_invite/zt-25438diev-mJ6LIZpJevG0LXCEcL0NhQ#)**.

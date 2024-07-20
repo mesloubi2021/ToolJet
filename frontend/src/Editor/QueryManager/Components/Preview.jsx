@@ -14,7 +14,6 @@ const Preview = ({ darkMode }) => {
   const previewLoading = usePreviewLoading();
   const { setPreviewData } = useQueryPanelActions();
   const previewPanelRef = useRef();
-
   useEffect(() => {
     setTheme(() => getTheme(darkMode));
   }, [darkMode]);
@@ -40,7 +39,7 @@ const Preview = ({ darkMode }) => {
 
   const renderRawData = () => {
     if (!queryPreviewData) {
-      return `${queryPreviewData}`;
+      return queryPreviewData === null ? '' : `${queryPreviewData}`;
     } else {
       return isJson ? JSON.stringify(queryPreviewData).toString() : queryPreviewData.toString();
     }
@@ -103,7 +102,13 @@ const Preview = ({ darkMode }) => {
               >
                 <Tab.Pane eventKey="json" transition={false}>
                   <div className="w-100 preview-data-container" data-cy="preview-json-data-container">
-                    <JSONTree theme={theme} data={queryPreviewData} invertTheme={!darkMode} collectionLimit={100} />
+                    <JSONTree
+                      theme={theme}
+                      data={queryPreviewData}
+                      invertTheme={!darkMode}
+                      collectionLimit={100}
+                      hideRoot={true}
+                    />
                   </div>
                 </Tab.Pane>
                 <Tab.Pane eventKey="raw" transition={false}>

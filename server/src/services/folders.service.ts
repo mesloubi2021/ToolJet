@@ -10,6 +10,7 @@ import { Folder } from '../entities/folder.entity';
 import { UsersService } from './users.service';
 import { catchDbException } from 'src/helpers/utils.helper';
 import { DataBaseConstraints } from 'src/helpers/db_constraints.constants';
+import { AppBase } from 'src/entities/app_base.entity';
 
 @Injectable()
 export class FoldersService {
@@ -24,30 +25,22 @@ export class FoldersService {
   ) {}
 
   async create(user: User, folderName): Promise<Folder> {
-    return await catchDbException(
-      async () => {
-        return await this.foldersRepository.save(
-          this.foldersRepository.create({
-            name: folderName,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            organizationId: user.organizationId,
-          })
-        );
-      },
-      DataBaseConstraints.FOLDER_NAME_UNIQUE,
-      'This folder name is already taken.'
-    );
+    return await catchDbException(async () => {
+      return await this.foldersRepository.save(
+        this.foldersRepository.create({
+          name: folderName,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          organizationId: user.organizationId,
+        })
+      );
+    }, [{ dbConstraint: DataBaseConstraints.FOLDER_NAME_UNIQUE, message: 'This folder name is already taken.' }]);
   }
 
   async update(folderId: string, folderName: string): Promise<UpdateResult> {
-    return await catchDbException(
-      async () => {
-        return await this.foldersRepository.update({ id: folderId }, { name: folderName });
-      },
-      DataBaseConstraints.FOLDER_NAME_UNIQUE,
-      'This folder name is already taken.'
-    );
+    return await catchDbException(async () => {
+      return await this.foldersRepository.update({ id: folderId }, { name: folderName });
+    }, [{ dbConstraint: DataBaseConstraints.FOLDER_NAME_UNIQUE, message: 'This folder name is already taken.' }]);
   }
 
   async allFolders(user: User, searchKey?: string): Promise<Folder[]> {
@@ -120,7 +113,7 @@ export class FoldersService {
       .getCount();
   }
 
-  async getAppsFor(user: User, folder: Folder, page: number, searchKey: string): Promise<App[]> {
+  async getAppsFor(user: User, folder: Folder, page: number, searchKey: string): Promise<AppBase[]> {
     const folderApps = await this.folderAppsRepository.find({
       where: {
         folderId: folder.id,
@@ -137,7 +130,7 @@ export class FoldersService {
 
     const folderAppsQb = createQueryBuilder(App, 'apps_in_folder').whereInIds(folderAppIds);
 
-    const viewableAppsInFolder = await createQueryBuilder(App, 'apps')
+    const viewableAppsInFolder = await createQueryBuilder(AppBase, 'apps')
       .innerJoin(
         '(' + viewableAppsQb.getQuery() + ')',
         'viewable_apps_join',
